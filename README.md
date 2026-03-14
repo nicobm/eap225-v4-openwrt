@@ -114,6 +114,69 @@ sudo usermod -aG dialout $USER
 
 ---
 
+### Paso 0.5: Verificar el adaptador USB-UART con multímetro
+
+Antes de conectar nada al EAP225, verificá que tu adaptador realmente opere a
+3.3V. Muchos adaptadores CH341A genéricos (los verdes baratos) dicen ser de 3.3V
+pero salen de fábrica configurados a 5V. Conectar 5V al SoC QCA9563 puede dañarlo
+de forma irreversible.
+
+**Necesitás:** multímetro digital (cualquiera sirve).
+
+#### Qué medir
+
+1. **Conectar el adaptador USB-UART a la PC** (sin conectar nada al otro extremo).
+2. **Poner el multímetro en modo voltaje DC** (símbolo V con línea recta, o VDC).
+   Rango: 20V o auto.
+3. **Medir VCC:** Punta roja en el pin VCC del adaptador, punta negra en GND.
+   - **Esperado: ~3.3V** (entre 3.0V y 3.6V está bien)
+   - Si marca ~5.0V → **NO CONECTAR** al EAP225.
+4. **Medir TXD en reposo:** Punta roja en TXD, punta negra en GND.
+   - **Esperado: ~3.3V** (el estado idle de una línea UART es alto)
+   - Si marca ~5.0V → el nivel lógico es de 5V, no sirve.
+
+#### Qué hacer si marca 5V
+
+| Adaptador | Solución |
+|---|---|
+| **CH341A (placa verde)** | Algunos tienen un jumper o pad para seleccionar 3.3V/5V. Otros necesitan cortar una pista y puentear. Buscá tu modelo específico + "3.3V mod". Si no tiene forma de cambiarlo, **no lo uses**. |
+| **FT232RL** | Generalmente tienen un jumper o solder bridge para seleccionar voltaje. Verificá el datasheet de tu placa. |
+| **CP2102** | La mayoría opera a 3.3V por defecto. Si mide 3.3V, estás bien. |
+| **Adaptador con switch/jumper** | Poné el switch en 3.3V y volvé a medir. |
+
+#### Medición rápida de continuidad (opcional pero recomendada)
+
+Antes de conectar al EAP225, verificá que no haya cortocircuitos en tus cables:
+
+1. **Multímetro en modo continuidad** (símbolo de onda/beep).
+2. Verificá que los cables que van de TXD, RXD y GND **no se tocan entre sí**
+   — cada uno debe ir a su pin correspondiente sin cruzarse.
+3. Verificá que **ningún cable toque el pin VCC** del header J4.
+
+#### Resumen visual de la medición
+
+```
+Adaptador USB-UART (conectado a la PC, sin conectar al EAP)
+
+  Pin VCC ────┐
+              │  Multímetro DC
+  Pin GND ────┘
+              Lectura esperada: 3.2V – 3.4V ✓
+              Lectura peligrosa: 4.8V – 5.2V ✗ NO USAR
+
+  Pin TXD ────┐
+              │  Multímetro DC
+  Pin GND ────┘
+              Lectura esperada: 3.2V – 3.4V ✓ (idle = alto)
+              Lectura peligrosa: 4.8V – 5.2V ✗ NO USAR
+```
+
+> **Regla de oro:** Si alguna medición da más de 3.6V, no conectes ese adaptador
+> al EAP225. Comprá uno que opere nativamente a 3.3V (los CP2102 y FT232RL
+> generalmente vienen bien de fábrica).
+
+---
+
 ### Paso 1: Descargar las imágenes de OpenWrt
 
 Desde el toolbox:
