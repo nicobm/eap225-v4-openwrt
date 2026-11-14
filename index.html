@@ -1,0 +1,1854 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>EAP225 v4 — OpenWrt guide</title>
+<meta name="description" content="Flash OpenWrt on the TP-Link Omada EAP225 v4 via serial console + U-Boot + TFTP. Step-by-step guide, bilingual (EN/ES).">
+<meta name="theme-color" content="#060911">
+<meta name="color-scheme" content="dark light">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop stop-color='%232dd4bf'/%3E%3Cstop offset='1' stop-color='%2360a5fa'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='14' fill='url(%23g)'/%3E%3Ctext x='32' y='43' font-family='ui-monospace,monospace' font-size='28' font-weight='800' text-anchor='middle' fill='%23041018'%3EE4%3C/text%3E%3C/svg%3E">
+<script>
+/* Apply the stored theme before the first paint to avoid a flash of the wrong palette. */
+(function () {
+  var theme;
+  try { theme = localStorage.getItem('eap225-theme'); } catch (e) {}
+  if (!theme) {
+    theme = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+  }
+  document.documentElement.setAttribute('data-theme', theme);
+})();
+</script>
+<style>
+/* ============================================================
+   Design tokens
+   ============================================================ */
+:root {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
+  --bg: #060911;
+  --bg-soft: #0a1120;
+  --panel: #0c1526;
+  --panel-2: #101c31;
+  --panel-3: #14223a;
+  --text: #e8eefb;
+  --text-muted: #93a4bf;
+  --text-faint: #6b7c96;
+  --border: rgba(148, 163, 184, 0.15);
+  --border-strong: rgba(148, 163, 184, 0.3);
+
+  --accent: #2dd4bf;
+  --accent-strong: #5eead4;
+  --accent-blue: #60a5fa;
+  --accent-soft: rgba(45, 212, 191, 0.12);
+  --danger: #fb7185;
+  --danger-soft: rgba(251, 113, 133, 0.1);
+  --warning: #fbbf24;
+  --warning-soft: rgba(251, 191, 36, 0.1);
+  --info: #60a5fa;
+  --info-soft: rgba(96, 165, 250, 0.1);
+  --success: #34d399;
+
+  --code-bg: #050b16;
+  --code-fg: #d7e3f4;
+  --code-border: rgba(96, 165, 250, 0.16);
+
+  --radius-sm: 8px;
+  --radius: 12px;
+  --radius-lg: 18px;
+  --header-h: 64px;
+  --max-w: 1280px;
+  --shadow: 0 18px 50px -24px rgba(0, 0, 0, 0.85);
+}
+
+[data-theme="light"] {
+  --bg: #f4f6fb;
+  --bg-soft: #eaeef6;
+  --panel: #ffffff;
+  --panel-2: #f7f9fc;
+  --panel-3: #eef2f9;
+  --text: #0f172a;
+  --text-muted: #55647c;
+  --text-faint: #7b8aa1;
+  --border: rgba(15, 23, 42, 0.1);
+  --border-strong: rgba(15, 23, 42, 0.2);
+
+  --accent: #0f766e;
+  --accent-strong: #0d9488;
+  --accent-blue: #2563eb;
+  --accent-soft: rgba(15, 118, 110, 0.09);
+  --danger: #be123c;
+  --danger-soft: rgba(190, 18, 60, 0.07);
+  --warning: #a16207;
+  --warning-soft: rgba(161, 98, 7, 0.08);
+  --info: #1d4ed8;
+  --info-soft: rgba(29, 78, 216, 0.07);
+  --success: #047857;
+
+  --code-bg: #0b1424;
+  --code-fg: #dbe6f5;
+  --code-border: rgba(15, 23, 42, 0.24);
+
+  --shadow: 0 20px 50px -30px rgba(15, 23, 42, 0.35);
+}
+
+/* ============================================================
+   Base
+   ============================================================ */
+*, *::before, *::after { box-sizing: border-box; }
+
+html {
+  scroll-behavior: smooth;
+  scroll-padding-top: calc(var(--header-h) + 24px);
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 16px;
+  line-height: 1.65;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow-x: hidden;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(900px 500px at 12% -8%, rgba(45, 212, 191, 0.07), transparent 65%),
+    radial-gradient(900px 520px at 92% 4%, rgba(96, 165, 250, 0.06), transparent 65%);
+}
+
+::selection { background: var(--accent); color: #04121a; }
+
+img, svg { display: block; max-width: 100%; }
+
+a { color: var(--accent-strong); text-decoration-thickness: 1px; text-underline-offset: 3px; }
+a:hover { color: var(--accent); }
+
+h1, h2, h3, h4 {
+  line-height: 1.16;
+  letter-spacing: -0.02em;
+  font-weight: 700;
+  margin: 0;
+  text-wrap: balance;
+}
+
+p { margin: 0; }
+ul, ol { margin: 0.6rem 0 0; padding-left: 1.3rem; }
+li { margin: 0.35rem 0; }
+li::marker { color: var(--accent); }
+strong { color: var(--text); font-weight: 650; }
+small { font-size: 0.85em; }
+
+code, pre, kbd, samp { font-family: var(--font-mono); }
+
+:not(pre) > code {
+  background: var(--accent-soft);
+  border: 1px solid rgba(45, 212, 191, 0.18);
+  color: var(--accent-strong);
+  padding: 0.1em 0.38em;
+  border-radius: 5px;
+  font-size: 0.86em;
+  white-space: nowrap;
+}
+
+hr { border: 0; border-top: 1px solid var(--border); margin: 2.5rem 0; }
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 4px;
+}
+
+/* ============================================================
+   Utilities
+   ============================================================ */
+.skip-link {
+  position: fixed;
+  top: 0.75rem;
+  left: 0.75rem;
+  z-index: 200;
+  transform: translateY(-180%);
+  background: var(--accent);
+  color: #04121a;
+  padding: 0.6rem 0.9rem;
+  border-radius: var(--radius-sm);
+  font-weight: 700;
+  transition: transform 0.2s ease;
+}
+.skip-link:focus { transform: translateY(0); }
+
+.reading-progress {
+  position: fixed;
+  inset: 0 0 auto;
+  height: 3px;
+  z-index: 120;
+  background: transparent;
+  pointer-events: none;
+}
+.reading-progress span {
+  display: block;
+  height: 100%;
+  width: 100%;
+  transform: scaleX(0);
+  transform-origin: 0 50%;
+  background: linear-gradient(90deg, var(--accent), var(--accent-blue));
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0);
+  white-space: nowrap; border: 0;
+}
+
+/* ============================================================
+   Header
+   ============================================================ */
+.site-header {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: color-mix(in srgb, var(--bg) 78%, transparent);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  backdrop-filter: blur(16px) saturate(140%);
+  border-bottom: 1px solid var(--border);
+  transition: box-shadow 0.25s ease, background 0.25s ease;
+}
+.site-header.is-scrolled { box-shadow: 0 10px 35px -24px rgba(0, 0, 0, 0.9); }
+
+.header__inner {
+  max-width: var(--max-w);
+  height: var(--header-h);
+  margin: 0 auto;
+  padding: 0 1.5rem;
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+}
+
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.7rem;
+  color: var(--text);
+  text-decoration: none;
+  flex: none;
+}
+.brand:hover { color: var(--text); }
+.brand__mark {
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(135deg, var(--accent), var(--accent-blue));
+  color: #04121a;
+  font-family: var(--font-mono);
+  font-weight: 800;
+  font-size: 0.9rem;
+  letter-spacing: -0.04em;
+  box-shadow: 0 6px 18px -8px rgba(45, 212, 191, 0.65);
+}
+.brand__text { display: flex; flex-direction: column; line-height: 1.1; }
+.brand__text strong { font-size: 0.95rem; letter-spacing: -0.01em; }
+.brand__text small { color: var(--text-muted); font-size: 0.7rem; letter-spacing: 0.06em; text-transform: uppercase; font-weight: 600; }
+
+.header__nav {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-right: auto;
+}
+.header__nav a {
+  color: var(--text-muted);
+  text-decoration: none;
+  font-size: 0.875rem;
+  font-weight: 550;
+  padding: 0.45rem 0.7rem;
+  border-radius: var(--radius-sm);
+  transition: color 0.15s ease, background 0.15s ease;
+}
+.header__nav a:hover { color: var(--text); background: var(--panel-2); }
+
+.header__actions { display: flex; align-items: center; gap: 0.5rem; flex: none; }
+
+.icon-btn {
+  width: 38px;
+  height: 38px;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+.icon-btn:hover { color: var(--text); border-color: var(--border-strong); background: var(--panel-2); }
+.icon-btn svg { width: 18px; height: 18px; }
+
+[data-theme="dark"] .icon-moon { display: none; }
+[data-theme="light"] .icon-sun { display: none; }
+
+.lang-switch {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel-2);
+}
+.lang-switch button {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 0.32rem 0.62rem;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+.lang-switch button:hover { color: var(--text); }
+.lang-switch button.is-active { background: var(--accent); color: #04121a; }
+
+/* ============================================================
+   Hero
+   ============================================================ */
+.hero {
+  position: relative;
+  overflow: hidden;
+  border-bottom: 1px solid var(--border);
+}
+.hero__bg {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(620px 380px at 12% -10%, rgba(45, 212, 191, 0.17), transparent 65%),
+    radial-gradient(720px 460px at 88% 0%, rgba(96, 165, 250, 0.14), transparent 65%);
+}
+.hero__bg::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  opacity: 0.5;
+  background-image:
+    linear-gradient(rgba(148, 163, 184, 0.055) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(148, 163, 184, 0.055) 1px, transparent 1px);
+  background-size: 56px 56px;
+  -webkit-mask-image: linear-gradient(to bottom, black, transparent 78%);
+  mask-image: linear-gradient(to bottom, black, transparent 78%);
+}
+.hero__inner {
+  position: relative;
+  max-width: var(--max-w);
+  margin: 0 auto;
+  padding: 4.75rem 1.5rem 3.75rem;
+}
+
+.eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.35rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--panel);
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.pulse {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 0 rgba(45, 212, 191, 0.6);
+  animation: pulse 2.2s infinite;
+}
+@keyframes pulse {
+  0% { box-shadow: 0 0 0 0 rgba(45, 212, 191, 0.55); }
+  70% { box-shadow: 0 0 0 8px rgba(45, 212, 191, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(45, 212, 191, 0); }
+}
+
+.hero h1 {
+  margin: 1.25rem 0 0;
+  max-width: 940px;
+  font-size: clamp(2.15rem, 5vw, 3.8rem);
+  font-weight: 800;
+  letter-spacing: -0.035em;
+}
+.grad {
+  background: linear-gradient(95deg, var(--accent-strong), var(--accent-blue));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.hero__lede {
+  margin: 1.1rem 0 0;
+  max-width: 760px;
+  color: var(--text-muted);
+  font-size: clamp(1rem, 1.5vw, 1.14rem);
+  line-height: 1.7;
+}
+
+.hero__cta { display: flex; flex-wrap: wrap; gap: 0.75rem; margin-top: 1.75rem; }
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.55rem;
+  padding: 0.75rem 1.15rem;
+  border-radius: var(--radius);
+  border: 1px solid transparent;
+  font-size: 0.92rem;
+  font-weight: 650;
+  text-decoration: none;
+  transition: transform 0.15s ease, box-shadow 0.15s ease, background 0.15s ease, border-color 0.15s ease;
+}
+.btn:hover { transform: translateY(-1px); }
+.btn svg { width: 16px; height: 16px; }
+.btn--primary {
+  background: linear-gradient(135deg, var(--accent), var(--accent-strong));
+  color: #04121a;
+  box-shadow: 0 12px 28px -14px rgba(45, 212, 191, 0.65);
+}
+.btn--primary:hover { color: #04121a; box-shadow: 0 16px 34px -14px rgba(45, 212, 191, 0.8); }
+.btn--ghost {
+  border-color: var(--border-strong);
+  background: var(--panel);
+  color: var(--text);
+}
+.btn--ghost:hover { border-color: var(--accent); color: var(--text); }
+
+.specs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin: 2.4rem 0 0;
+}
+.spec {
+  padding: 0.9rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--panel) 82%, transparent);
+}
+.spec dt {
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.spec dd {
+  margin: 0.2rem 0 0;
+  font-family: var(--font-mono);
+  font-size: 0.92rem;
+  font-weight: 650;
+  color: var(--text);
+}
+
+.hero__note {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 1.5rem;
+  color: var(--text-faint);
+  font-size: 0.82rem;
+}
+.hero__note svg { width: 15px; height: 15px; color: var(--accent); flex: none; }
+
+/* ============================================================
+   Shell / layout
+   ============================================================ */
+.shell {
+  max-width: var(--max-w);
+  margin: 0 auto;
+  padding: 2.5rem 1.5rem 4rem;
+  display: grid;
+  grid-template-columns: 248px minmax(0, 1fr);
+  gap: 3.5rem;
+  align-items: start;
+}
+
+.toc {
+  position: sticky;
+  top: calc(var(--header-h) + 20px);
+  align-self: start;
+  max-height: calc(100vh - var(--header-h) - 40px);
+  overflow-y: auto;
+  padding-right: 0.65rem;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+.toc::-webkit-scrollbar { width: 5px; }
+.toc::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 999px; }
+
+.toc__title {
+  margin: 0 0 0.8rem;
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+.toc__group { margin: 0 0 1.15rem; }
+.toc__label {
+  margin: 0 0 0.35rem;
+  padding: 0 0.6rem;
+  color: var(--text);
+  font-size: 0.73rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+}
+.toc__group a {
+  display: block;
+  padding: 0.28rem 0.6rem;
+  border-left: 2px solid transparent;
+  color: var(--text-muted);
+  font-size: 0.815rem;
+  line-height: 1.4;
+  text-decoration: none;
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+.toc__group a:hover { color: var(--text); background: var(--panel-2); }
+.toc__group a.is-active {
+  color: var(--accent-strong);
+  border-left-color: var(--accent);
+  background: var(--accent-soft);
+  font-weight: 600;
+}
+.toc__foot {
+  margin-top: 1.2rem;
+  padding: 0.8rem;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius);
+  color: var(--text-faint);
+  font-size: 0.73rem;
+  line-height: 1.5;
+}
+.toc__foot strong { display: block; color: var(--accent-strong); font-size: 0.76rem; }
+
+.content { min-width: 0; max-width: 920px; }
+
+/* Mobile table of contents */
+.toc-mobile {
+  display: none;
+  margin: 0 0 2rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+.toc-mobile summary {
+  cursor: pointer;
+  padding: 0.85rem 1rem;
+  font-weight: 650;
+  font-size: 0.9rem;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.toc-mobile summary::-webkit-details-marker { display: none; }
+.toc-mobile summary::after { content: "+"; color: var(--accent); font-size: 1.2rem; line-height: 1; }
+.toc-mobile[open] summary::after { content: "−"; }
+.toc-mobile__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.2rem 1rem;
+  padding: 0 1rem 1rem;
+}
+.toc-mobile__grid a {
+  color: var(--text-muted);
+  text-decoration: none;
+  font-size: 0.83rem;
+  padding: 0.25rem 0;
+}
+.toc-mobile__grid a:hover { color: var(--accent-strong); }
+.toc-mobile__grid .toc-mobile__heading {
+  grid-column: 1 / -1;
+  margin-top: 0.6rem;
+  color: var(--text);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* ============================================================
+   Part headers & sections
+   ============================================================ */
+.part {
+  margin: 0 0 2.75rem;
+  padding: 2rem 0 0;
+  border-top: 1px solid var(--border);
+  scroll-margin-top: calc(var(--header-h) + 20px);
+}
+.part__kicker {
+  margin: 0 0 0.7rem;
+  color: var(--accent-strong);
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+.part__row { display: flex; align-items: flex-start; gap: 1.1rem; }
+.part__num {
+  font-family: var(--font-mono);
+  font-size: clamp(2.4rem, 5vw, 3.6rem);
+  font-weight: 800;
+  line-height: 0.9;
+  letter-spacing: -0.06em;
+  background: linear-gradient(160deg, var(--accent-strong), var(--accent-blue));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  opacity: 0.9;
+  flex: none;
+}
+.part h2 { font-size: clamp(1.55rem, 3vw, 2.15rem); }
+.part p { margin-top: 0.55rem; color: var(--text-muted); max-width: 760px; }
+
+.section {
+  margin: 0 0 2.9rem;
+  scroll-margin-top: calc(var(--header-h) + 24px);
+}
+.section__head { margin-bottom: 1.15rem; }
+.section__head h2,
+.section > h2 {
+  font-size: clamp(1.35rem, 2.4vw, 1.75rem);
+  padding-bottom: 0.55rem;
+  position: relative;
+}
+.section__head h2::after,
+.section > h2::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: 46px;
+  height: 3px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent), var(--accent-blue));
+}
+.section__head p { margin-top: 0.65rem; color: var(--text-muted); }
+.section > p { margin-top: 0.8rem; color: var(--text-muted); }
+.section > p strong { color: var(--text); }
+
+/* ============================================================
+   Callouts
+   ============================================================ */
+.callouts {
+  display: grid;
+  gap: 0.85rem;
+  margin: 1.4rem 0 2.4rem;
+}
+.callouts--3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+
+.callout {
+  --callout-accent: var(--info);
+  --callout-bg: var(--info-soft);
+  padding: 1rem 1.05rem;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--callout-accent);
+  border-radius: var(--radius);
+  background: linear-gradient(180deg, var(--callout-bg), transparent 140%);
+}
+.callout--danger { --callout-accent: var(--danger); --callout-bg: var(--danger-soft); }
+.callout--warning { --callout-accent: var(--warning); --callout-bg: var(--warning-soft); }
+.callout--info { --callout-accent: var(--info); --callout-bg: var(--info-soft); }
+.callout--success { --callout-accent: var(--success); --callout-bg: var(--accent-soft); }
+
+.callout__head { display: flex; align-items: flex-start; gap: 0.55rem; }
+.callout__icon {
+  flex: none;
+  width: 22px; height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--callout-accent) 18%, transparent);
+  color: var(--callout-accent);
+  font-size: 0.78rem;
+  line-height: 1;
+  margin-top: 0.1rem;
+}
+.callout__title { margin: 0; font-weight: 700; font-size: 0.92rem; }
+.callout__body { margin: 0.45rem 0 0; color: var(--text-muted); font-size: 0.9rem; }
+.callout > .callout__body:first-child { margin-top: 0; }
+.callout__body code { white-space: normal; }
+
+/* ============================================================
+   Tables
+   ============================================================ */
+.table-wrap {
+  margin: 1.25rem 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: auto;
+  background: var(--panel);
+}
+table { width: 100%; border-collapse: collapse; font-size: 0.9rem; min-width: 520px; }
+thead th {
+  padding: 0.72rem 0.95rem;
+  background: var(--panel-2);
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-align: left;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+tbody td { padding: 0.8rem 0.95rem; border-top: 1px solid var(--border); vertical-align: top; }
+tbody tr { transition: background 0.12s ease; }
+tbody tr:hover { background: var(--panel-2); }
+td code { white-space: nowrap; }
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.18rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.76rem;
+  font-weight: 650;
+  white-space: nowrap;
+}
+.badge--ok { background: var(--accent-soft); color: var(--success); border: 1px solid color-mix(in srgb, var(--success) 26%, transparent); }
+.badge--bad { background: var(--danger-soft); color: var(--danger); border: 1px solid color-mix(in srgb, var(--danger) 26%, transparent); }
+
+/* ============================================================
+   Code blocks
+   ============================================================ */
+.code-wrap { position: relative; margin: 1rem 0; }
+.code-block {
+  margin: 0;
+  padding: 2.5rem 1.1rem 1.1rem;
+  background: var(--code-bg);
+  border: 1px solid var(--code-border);
+  border-radius: var(--radius);
+  color: var(--code-fg);
+  font-size: 0.81rem;
+  line-height: 1.72;
+  max-height: 620px;
+  overflow: auto;
+  tab-size: 2;
+  -webkit-overflow-scrolling: touch;
+}
+.code-block code {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  white-space: pre;
+}
+.code-block span { color: inherit; }
+.code-block::-webkit-scrollbar { height: 9px; }
+.code-block::-webkit-scrollbar-thumb { background: rgba(148, 163, 184, 0.28); border-radius: 999px; }
+
+.copy-code {
+  position: absolute;
+  top: 0.55rem;
+  right: 0.6rem;
+  z-index: 2;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.55rem;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 7px;
+  background: rgba(10, 17, 32, 0.88);
+  color: #a8b8d0;
+  font-family: var(--font-sans);
+  font-size: 0.68rem;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  opacity: 0.72;
+  transition: opacity 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+.code-wrap:hover .copy-code,
+.copy-code:focus-visible { opacity: 1; }
+.copy-code:hover { color: #e8eefb; border-color: rgba(45, 212, 191, 0.55); }
+.copy-code svg { width: 13px; height: 13px; }
+
+/* ============================================================
+   Accordions
+   ============================================================ */
+.accordion {
+  margin: 1rem 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+  overflow: hidden;
+}
+.accordion + .accordion { margin-top: 0.7rem; }
+.accordion summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.9rem 1.05rem;
+  cursor: pointer;
+  font-size: 0.92rem;
+  font-weight: 650;
+  list-style: none;
+  transition: background 0.15s ease;
+}
+.accordion summary:hover { background: var(--panel-2); }
+.accordion summary::-webkit-details-marker { display: none; }
+.accordion summary::after {
+  content: "";
+  flex: none;
+  width: 8px; height: 8px;
+  border-right: 2px solid var(--text-muted);
+  border-bottom: 2px solid var(--text-muted);
+  transform: rotate(45deg) translateY(-2px);
+  transition: transform 0.2s ease;
+}
+.accordion[open] > summary::after { transform: rotate(225deg) translateY(-2px); }
+.accordion__body { padding: 0.15rem 1.05rem 1.1rem; border-top: 1px solid var(--border); }
+.accordion__body > :first-child { margin-top: 0.9rem; }
+.accordion .accordion { background: var(--panel-2); margin: 0.9rem 0; }
+.accordion .accordion .accordion__body { background: var(--panel-2); }
+
+/* ============================================================
+   Steps & phases
+   ============================================================ */
+.phase { margin: 2.1rem 0 0; }
+.phase__head {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-bottom: 1.1rem;
+}
+.phase__num {
+  flex: none;
+  padding: 0.18rem 0.5rem;
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  border-radius: 6px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+.phase h3 { font-size: clamp(1.05rem, 2vw, 1.25rem); }
+
+.step {
+  position: relative;
+  margin: 1.35rem 0;
+  padding: 0.1rem 0 0.1rem 1.35rem;
+  border-left: 2px solid var(--border);
+}
+.step::before {
+  content: "";
+  position: absolute;
+  left: -6px;
+  top: 0.5rem;
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  background: var(--bg);
+  border: 2px solid var(--accent);
+}
+.step h4 { font-size: 1.02rem; margin: 0 0 0.55rem; }
+.step > p { margin: 0.65rem 0; color: var(--text-muted); }
+.step > p strong { color: var(--text); }
+.step > ol, .step > ul { color: var(--text-muted); }
+.substep { font-weight: 600; color: var(--text) !important; }
+
+/* ============================================================
+   Password generator
+   ============================================================ */
+.generator {
+  position: relative;
+  margin-top: 1.3rem;
+  padding: 1.35rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background:
+    radial-gradient(420px 220px at 0% 0%, rgba(45, 212, 191, 0.08), transparent 65%),
+    var(--panel);
+  box-shadow: var(--shadow);
+}
+.generator__form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1.1rem;
+}
+.field { min-width: 0; }
+.field label { display: block; font-size: 0.86rem; font-weight: 650; margin-bottom: 0.15rem; }
+.field__hint { margin: 0 0 0.55rem; color: var(--text-faint); font-size: 0.78rem; line-height: 1.5; }
+.field input {
+  width: 100%;
+  padding: 0.68rem 0.8rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: var(--bg-soft);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 0.9rem;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.field input::placeholder { color: var(--text-faint); }
+.field input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+}
+.field input[aria-invalid="true"] { border-color: var(--danger); }
+.field__error { margin: 0.4rem 0 0; color: var(--danger); font-size: 0.78rem; font-weight: 600; }
+
+.results {
+  margin-top: 1.35rem;
+  padding-top: 1.2rem;
+  border-top: 1px solid var(--border);
+}
+.results__head {
+  margin-bottom: 0.75rem;
+  color: var(--text-faint);
+  font-family: var(--font-mono);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.result {
+  padding: 0.75rem 0.85rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-soft);
+}
+.result + .result { margin-top: 0.55rem; }
+.result-group { margin-top: 1rem; }
+.result-group > .result__label { margin-bottom: 0.5rem; }
+.result__label { display: block; color: var(--text-muted); font-size: 0.76rem; font-weight: 600; }
+.result__value {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-top: 0.15rem;
+}
+.result__value code {
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--accent-strong);
+  font-size: 1rem;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  overflow-wrap: anywhere;
+}
+.result--split {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.9rem;
+}
+.result--split .result { margin-top: 0; }
+
+.copy-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.3rem 0.55rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 7px;
+  background: var(--panel);
+  color: var(--text-muted);
+  font-family: var(--font-sans);
+  font-size: 0.7rem;
+  font-weight: 650;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease, background 0.15s ease;
+}
+.copy-btn:hover { color: var(--text); border-color: var(--accent); }
+.copy-btn svg { width: 12px; height: 12px; }
+
+.generator .callout { margin-top: 1rem; }
+
+/* ============================================================
+   Configuration sections (Part 2)
+   ============================================================ */
+.config {
+  padding: 1.15rem 1.2rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--panel);
+}
+.config + .config { margin-top: 0.75rem; }
+.section.config { margin-bottom: 0.75rem; }
+.section.config:last-child { margin-bottom: 2rem; }
+.config > h3 { font-size: 1.02rem; margin: 0 0 0.5rem; }
+.config > h3 small { color: var(--text-faint); font-weight: 500; }
+.config p, .config ul, .config ol { color: var(--text-muted); }
+.config h4 {
+  margin: 1.1rem 0 0.35rem;
+  font-size: 0.88rem;
+  color: var(--text);
+  letter-spacing: 0.01em;
+}
+.config > h4:first-of-type { margin-top: 0.9rem; }
+.config .code-wrap { margin: 0.8rem 0 0.9rem; }
+
+/* ============================================================
+   Footer
+   ============================================================ */
+.site-footer {
+  border-top: 1px solid var(--border);
+  margin-top: 2rem;
+}
+.footer__inner {
+  max-width: var(--max-w);
+  margin: 0 auto;
+  padding: 2rem 1.5rem 2.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1.25rem;
+  color: var(--text-faint);
+  font-size: 0.8rem;
+}
+.footer__inner p { max-width: 760px; line-height: 1.65; }
+.footer__meta { display: flex; flex-wrap: wrap; gap: 0.4rem 1rem; margin-top: 0.7rem; font-family: var(--font-mono); font-size: 0.7rem; }
+.footer__top {
+  color: var(--text-muted);
+  text-decoration: none;
+  font-weight: 600;
+  font-size: 0.78rem;
+}
+.footer__top:hover { color: var(--accent-strong); }
+
+.back-to-top {
+  position: fixed;
+  right: 1.25rem;
+  bottom: 1.25rem;
+  z-index: 90;
+  width: 42px; height: 42px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border-strong);
+  border-radius: 11px;
+  background: var(--panel);
+  color: var(--text-muted);
+  cursor: pointer;
+  box-shadow: var(--shadow);
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(8px);
+  transition: opacity 0.2s ease, transform 0.2s ease, visibility 0.2s, color 0.15s ease;
+}
+.back-to-top.is-visible { opacity: 1; visibility: visible; transform: translateY(0); }
+.back-to-top:hover { color: var(--accent-strong); }
+.back-to-top svg { width: 17px; height: 17px; }
+
+/* ============================================================
+   Responsive
+   ============================================================ */
+@media (max-width: 1080px) {
+  .shell { grid-template-columns: 220px minmax(0, 1fr); gap: 2.5rem; }
+  .callouts--3 { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 1024px) {
+  .shell { grid-template-columns: minmax(0, 1fr); gap: 0; padding-top: 1.75rem; }
+  .toc { display: none; }
+  .toc-mobile { display: block; }
+  .header__nav { display: none; }
+  .content { max-width: none; }
+}
+
+@media (max-width: 760px) {
+  .header__inner { padding: 0 1rem; gap: 0.75rem; }
+  .header__actions { margin-left: auto; }
+  .brand__text small { display: none; }
+  .hero__inner { padding: 3.25rem 1rem 2.75rem; }
+  .shell { padding: 1.5rem 1rem 3rem; }
+  .specs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .generator__form { grid-template-columns: 1fr; }
+  .result--split { grid-template-columns: 1fr; }
+  .part__num { font-size: 2.4rem; }
+  .part__row { gap: 0.8rem; }
+  .toc-mobile__grid { grid-template-columns: 1fr; }
+  .footer__inner { padding: 1.75rem 1rem 2.25rem; }
+  table { min-width: 460px; }
+}
+
+@media (max-width: 480px) {
+  .brand__text { display: none; }
+  .header__actions { gap: 0.35rem; }
+  .lang-switch button { padding: 0.3rem 0.5rem; }
+  .btn { width: 100%; }
+  .hero__cta { flex-direction: column; }
+  .part__row { flex-direction: column; gap: 0.4rem; }
+  .part__num { font-size: 2rem; }
+}
+
+/* ============================================================
+   Motion & print
+   ============================================================ */
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; }
+}
+
+@media print {
+  .site-header, .toc, .toc-mobile, .reading-progress, .back-to-top, .copy-code, .hero__cta, .footer__top { display: none !important; }
+  body { background: #fff; color: #111; }
+  body::before { display: none; }
+  .shell { display: block; padding: 0; }
+  .code-block { background: #f4f4f4; color: #111; border-color: #ccc; white-space: pre-wrap; }
+  .callout, .config, .generator { break-inside: avoid; }
+  a { color: #111; text-decoration: underline; }
+}
+</style>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<div class="reading-progress" aria-hidden="true"><span id="progressBar"></span></div>
+
+<header class="site-header" id="siteHeader">
+  <div class="header__inner">
+    <a class="brand" href="#top" aria-label="EAP225 v4 OpenWrt guide">
+      <span class="brand__mark" aria-hidden="true">E4</span>
+      <span class="brand__text">
+        <strong>EAP225 v4</strong>
+        <small>OpenWrt guide</small>
+      </span>
+    </a>
+
+    <nav class="header__nav" aria-label="Main navigation">
+      <a href="#part-1" data-en="Flashing" data-es="Flasheo">Flashing</a>
+      <a href="#part-2" data-en="First boot" data-es="Primer arranque">First boot</a>
+      <a href="#troubleshooting" data-en="Troubleshooting" data-es="Solución de problemas">Troubleshooting</a>
+    </nav>
+
+    <div class="header__actions">
+      <a class="icon-btn" href="https://github.com/nicobm/eap225-v4-openwrt" target="_blank" rel="noopener noreferrer" aria-label="GitHub repository">
+        <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5C5.65.5.5 5.65.5 12c0 5.08 3.29 9.39 7.86 10.91.58.11.79-.25.79-.56v-2.17c-3.2.7-3.88-1.36-3.88-1.36-.52-1.33-1.28-1.68-1.28-1.68-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.56-.29-5.25-1.28-5.25-5.7 0-1.26.45-2.29 1.19-3.1-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.18 1.18a11.1 11.1 0 0 1 5.8 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.81 1.19 1.84 1.19 3.1 0 4.43-2.7 5.41-5.27 5.69.41.36.78 1.06.78 2.14v3.17c0 .31.21.68.8.56A10.52 10.52 0 0 0 23.5 12C23.5 5.65 18.35.5 12 .5Z"/></svg>
+      </a>
+      <button class="icon-btn" id="themeToggle" type="button" aria-label="Switch theme">
+        <svg class="icon-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42"/></svg>
+        <svg class="icon-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z"/></svg>
+      </button>
+      <div class="lang-switch" role="group" aria-label="Language / Idioma">
+        <button id="langEn" type="button" aria-pressed="true">EN</button>
+        <button id="langEs" type="button" aria-pressed="false">ES</button>
+      </div>
+    </div>
+  </div>
+</header>
+
+<section class="hero" id="top">
+  <div class="hero__bg" aria-hidden="true"></div>
+  <div class="hero__inner">
+    <p class="eyebrow">
+      <span class="pulse" aria-hidden="true"></span>
+      <span data-en="Field-tested OpenWrt guide" data-es="Guía de OpenWrt probada en campo">Field-tested OpenWrt guide</span>
+    </p>
+
+    <h1>
+      <span data-en="Flash OpenWrt on the" data-es="Flashear OpenWrt en el">Flash OpenWrt on the</span>
+      <span class="grad">TP-Link EAP225 v4</span>
+    </h1>
+
+    <p class="hero__lede" data-en="From stock firmware 5.2.x to OpenWrt: serial console + U-Boot + TFTP. Step-by-step, with safety checks, multimeter verification and TFTP transfer. No SSH password tricks — the firmware 5.2.x blocks them." data-es="Del firmware de fábrica 5.2.x a OpenWrt: consola serial + U-Boot + TFTP. Paso a paso, con verificaciones de seguridad, comprobación con multímetro y transferencia TFTP. Sin trucos de contraseña SSH — el firmware 5.2.x los bloquea.">From stock firmware 5.2.x to OpenWrt: serial console + U-Boot + TFTP. Step-by-step, with safety checks, multimeter verification and TFTP transfer. No SSH password tricks — the firmware 5.2.x blocks them.</p>
+
+    <div class="hero__cta">
+      <a class="btn btn--primary" href="#overview">
+        <span data-en="Start flashing" data-es="Empezar a flashear">Start flashing</span>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6"/></svg>
+      </a>
+      <a class="btn btn--ghost" href="#first-boot">
+        <span data-en="First boot" data-es="Primer arranque">First boot</span>
+      </a>
+    </div>
+
+    <dl class="specs">
+      <div class="spec"><dt>SoC</dt><dd>QCA9563</dd></div>
+      <div class="spec"><dt>RAM</dt><dd>128 MB</dd></div>
+      <div class="spec"><dt>Target</dt><dd>ath79/generic</dd></div>
+      <div class="spec"><dt>OpenWrt</dt><dd>23.05.5</dd></div>
+    </dl>
+
+    <p class="hero__note">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
+      <span data-en="Hardware access required: serial console + soldering. Nothing leaves your browser." data-es="Se requiere acceso físico: consola serial + soldadura. Nada sale de tu navegador.">Hardware access required: serial console + soldering. Nothing leaves your browser.</span>
+    </p>
+  </div>
+</section>
+
+<div class="shell">
+  <aside class="toc">
+    <nav aria-label="On this page">
+      <p class="toc__title" data-en="On this page" data-es="En esta página">On this page</p>
+
+      <div class="toc__group">
+        <p class="toc__label" data-en="Part 1 · Flashing" data-es="Parte 1 · Flasheo">Part 1 · Flashing</p>
+        <a href="#overview" data-en="Overview" data-es="Resumen">Overview</a>
+        <a href="#firmware-situation" data-en="Firmware 5.2.x" data-es="Firmware 5.2.x">Firmware 5.2.x</a>
+        <a href="#specs" data-en="Specs" data-es="Especificaciones">Specs</a>
+        <a href="#materials" data-en="Materials" data-es="Materiales">Materials</a>
+        <a href="#serial-check" data-en="Serial adapter check" data-es="Verificación del adaptador">Serial adapter check</a>
+        <a href="#flash-guide" data-en="Flash guide" data-es="Guía de flasheo">Flash guide</a>
+        <a href="#troubleshooting" data-en="Troubleshooting" data-es="Solución de problemas">Troubleshooting</a>
+      </div>
+
+      <div class="toc__group">
+        <p class="toc__label" data-en="Part 2 · First boot" data-es="Parte 2 · Primer arranque">Part 2 · First boot</p>
+        <a href="#first-boot" data-en="First boot" data-es="Primer arranque">First boot</a>
+        <a href="#basic-config" data-en="Basic config" data-es="Configuración básica">Basic config</a>
+      </div>
+
+      <div class="toc__foot">
+        <strong data-en="Hardware access required" data-es="Se requiere acceso físico">Hardware access required</strong>
+        <span data-en="Serial console + soldering. No software-only method exists for firmware 5.2.x." data-es="Consola serial + soldadura. No existe método solo por software para firmware 5.2.x.">Serial console + soldering. No software-only method exists for firmware 5.2.x.</span>
+      </div>
+    </nav>
+  </aside>
+
+  <main class="content" id="main">
+    <section class="part" id="part-1" data-spy>
+      <p class="part__kicker" data-en="Part 1" data-es="Parte 1">Part 1</p>
+      <div class="part__row">
+        <span class="part__num" aria-hidden="true">01</span>
+        <div>
+          <h2 data-en="Flashing OpenWrt on the EAP225 v4" data-es="Flasheo de OpenWrt en el EAP225 v4">Flashing OpenWrt on the EAP225 v4</h2>
+          <p data-en="Replace TP-Link's stock firmware with OpenWrt. This section is specific to the EAP225 v4 hardware and requires physical access: serial console + soldering." data-es="Reemplazar el firmware de fábrica de TP-Link por OpenWrt. Esta sección es específica del hardware EAP225 v4 y requiere acceso físico: consola serial + soldadura.">Replace TP-Link's stock firmware with OpenWrt. This section is specific to the EAP225 v4 hardware and requires physical access: serial console + soldering.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="overview" data-spy>
+      <div class="section__head">
+        <h2 data-en="Overview" data-es="Resumen">Overview</h2>
+      </div>
+      <p data-en="OpenWrt officially supports the EAP225 v4 (target <code>ath79/generic</code>) since 2022. The standard software installation method (SSH + <code>cliclientd stopcs</code>) works only on firmware ≤ 5.1.6. Firmware 5.2.x blocks it: TP-Link replaced the Linux shell with a restrictive proprietary CLI and removed <code>cliclientd</code>." data-es="OpenWrt soporta oficialmente el EAP225 v4 (target <code>ath79/generic</code>) desde 2022. El método estándar por software (SSH + <code>cliclientd stopcs</code>) funciona solo con firmware ≤ 5.1.6. El firmware 5.2.x lo bloquea: TP-Link reemplazó el shell Linux por una CLI propietaria restrictiva y eliminó <code>cliclientd</code>.">OpenWrt officially supports the EAP225 v4 (target <code>ath79/generic</code>) since 2022. The standard software installation method (SSH + <code>cliclientd stopcs</code>) works only on firmware ≤ 5.1.6. Firmware 5.2.x blocks it: TP-Link replaced the Linux shell with a restrictive proprietary CLI and removed <code>cliclientd</code>.</p>
+      <p data-en="The only confirmed method for firmware 5.2.x is <strong>serial console + U-Boot + TFTP</strong>: bypass the stock firmware entirely by talking to the bootloader over the PCB's serial port." data-es="El único método confirmado para firmware 5.2.x es <strong>consola serial + U-Boot + TFTP</strong>: bypassar completamente el firmware de fábrica hablando con el bootloader por el puerto serial del PCB.">The only confirmed method for firmware 5.2.x is <strong>serial console + U-Boot + TFTP</strong>: bypass the stock firmware entirely by talking to the bootloader over the PCB's serial port.</p>
+      <p data-en="This guide targets firmware <strong>5.2.3</strong> (Build 20250709). Downgrade to previous versions is explicitly forbidden by 5.2.x, so there is no software way back." data-es="Esta guía apunta al firmware <strong>5.2.3</strong> (Build 20250709). El downgrade a versiones anteriores está explícitamente prohibido por 5.2.x, así que no hay forma por software de volver atrás.">This guide targets firmware <strong>5.2.3</strong> (Build 20250709). Downgrade to previous versions is explicitly forbidden by 5.2.x, so there is no software way back.</p>
+    </section>
+
+    <div class="callouts callouts--3">
+      <div class="callout callout--danger">
+        <div class="callout__head">
+          <span class="callout__icon" aria-hidden="true">!</span>
+          <p class="callout__title" data-en="3.3V only" data-es="Solo 3.3V">3.3V only</p>
+        </div>
+        <p class="callout__body" data-en="The EAP225 v4 SoC (QCA9563) runs at 3.3V. A 5V USB-UART adapter can permanently damage it. Verify your adapter with a multimeter before connecting anything." data-es="El SoC del EAP225 v4 (QCA9563) opera a 3.3V. Un adaptador USB-UART de 5V puede dañarlo permanentemente. Verificá tu adaptador con un multímetro antes de conectar nada.">The EAP225 v4 SoC (QCA9563) runs at 3.3V. A 5V USB-UART adapter can permanently damage it. Verify your adapter with a multimeter before connecting anything.</p>
+      </div>
+      <div class="callout callout--warning">
+        <div class="callout__head">
+          <span class="callout__icon" aria-hidden="true">!</span>
+          <p class="callout__title" data-en="No factory recovery" data-es="Sin recuperación de fábrica">No factory recovery</p>
+        </div>
+        <p class="callout__body" data-en="After flashing OpenWrt there is no TP-Link recovery mode. Keep a full flash backup if you want to go back to stock (requires an SPI programmer otherwise)." data-es="Después de flashear OpenWrt no hay modo de recuperación de TP-Link. Hacé un backup completo de la flash si querés volver al stock (si no, se necesita programador SPI).">After flashing OpenWrt there is no TP-Link recovery mode. Keep a full flash backup if you want to go back to stock (requires an SPI programmer otherwise).</p>
+      </div>
+      <div class="callout callout--warning">
+        <div class="callout__head">
+          <span class="callout__icon" aria-hidden="true">!</span>
+          <p class="callout__title" data-en="Bricking risk" data-es="Riesgo de brickeo">Bricking risk</p>
+        </div>
+        <p class="callout__body" data-en="A power loss during flashing can brick the device. Use a stable PoE source and do not disconnect anything during the process." data-es="Un corte de energía durante el flasheo puede brickear el equipo. Usá una fuente PoE estable y no desconectes nada durante el proceso.">A power loss during flashing can brick the device. Use a stable PoE source and do not disconnect anything during the process.</p>
+      </div>
+    </div>
+
+    <section class="section" id="firmware-situation" data-spy>
+      <div class="section__head">
+        <h2 data-en="What changed in firmware 5.2.x" data-es="Qué cambió en el firmware 5.2.x">What changed in firmware 5.2.x</h2>
+      </div>
+      <p data-en="On firmware ≤ 5.1.6, SSH gave a full Linux shell where you could run <code>cliclientd stopcs</code> and then flash OpenWrt from the web UI. From 5.2.x onward TP-Link:" data-es="En firmware ≤ 5.1.6, SSH daba un shell Linux completo donde se podía ejecutar <code>cliclientd stopcs</code> y después flashear OpenWrt desde la interfaz web. A partir de 5.2.x, TP-Link:">On firmware ≤ 5.1.6, SSH gave a full Linux shell where you could run <code>cliclientd stopcs</code> and then flash OpenWrt from the web UI. From 5.2.x onward TP-Link:</p>
+      <ul>
+        <li data-en="Removed the Linux shell over SSH — now a proprietary CLI (prompt <code>EAP></code> / <code>EAP#</code>) like Cisco." data-es="Eliminó el shell Linux por SSH — ahora una CLI propietaria (prompt <code>EAP></code> / <code>EAP#</code>) tipo Cisco.">Removed the Linux shell over SSH — now a proprietary CLI (prompt <code>EAP></code> / <code>EAP#</code>) like Cisco.</li>
+        <li data-en="Removed the <code>cliclientd</code> command — it does not exist in the new CLI." data-es="Eliminó el comando <code>cliclientd</code> — no existe en la nueva CLI.">Removed the <code>cliclientd</code> command — it does not exist in the new CLI.</li>
+        <li data-en="Blocked downgrade — cannot roll back to any previous version." data-es="Bloqueó el downgrade — no se puede volver a ninguna versión anterior.">Blocked downgrade — cannot roll back to any previous version.</li>
+        <li data-en="Linux commands (<code>ls</code>, <code>cat</code>, <code>sh</code>) do not work; <code>enable</code> only exposes diagnostic <code>show</code> commands." data-es="Los comandos Linux (<code>ls</code>, <code>cat</code>, <code>sh</code>) no funcionan; <code>enable</code> solo expone comandos <code>show</code> de diagnóstico.">Linux commands (<code>ls</code>, <code>cat</code>, <code>sh</code>) do not work; <code>enable</code> only exposes diagnostic <code>show</code> commands.</li>
+      </ul>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th data-en="Stock firmware" data-es="Firmware stock">Stock firmware</th>
+              <th data-en="SSH + cliclientd + web" data-es="SSH + cliclientd + web">SSH + cliclientd + web</th>
+              <th data-en="Serial + U-Boot" data-es="Serial + U-Boot">Serial + U-Boot</th>
+              <th data-en="TFTP recovery (reset button)" data-es="Recovery TFTP (botón reset)">TFTP recovery (reset button)</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><code>≤ 5.1.6</code></td>
+              <td><span class="badge badge--ok">✅ <span data-en="Works" data-es="Funciona">Works</span></span></td>
+              <td><span class="badge badge--ok">✅ <span data-en="Works" data-es="Funciona">Works</span></span></td>
+              <td data-en="Not documented for v4" data-es="No documentado para v4">Not documented for v4</td>
+            </tr>
+            <tr>
+              <td><code>5.2.x</code></td>
+              <td><span class="badge badge--bad">❌ <span data-en="Blocked" data-es="Bloqueado">Blocked</span></span></td>
+              <td><span class="badge badge--ok">✅ <span data-en="Works" data-es="Funciona">Works</span></span></td>
+              <td data-en="Not documented for v4" data-es="No documentado para v4">Not documented for v4</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="section" id="specs" data-spy>
+      <div class="section__head">
+        <h2 data-en="Specifications" data-es="Especificaciones">Specifications</h2>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <tbody>
+            <tr><td><strong>SoC</strong></td><td>QCA9563 @ 775 MHz</td></tr>
+            <tr><td><strong>RAM</strong></td><td>128 MiB DDR2</td></tr>
+            <tr><td><strong>Flash</strong></td><td>16 MiB SPI-NOR</td></tr>
+            <tr><td><strong>WiFi 2.4 GHz</strong></td><td data-en="b/g/n 3x3 (integrated in SoC, driver ath9k)" data-es="b/g/n 3x3 (integrado en el SoC, driver ath9k)">b/g/n 3x3 (integrated in SoC, driver ath9k)</td></tr>
+            <tr><td><strong>WiFi 5 GHz</strong></td><td data-en="a/n/ac 2x2 MU-MIMO (QCA9886, driver ath10k)" data-es="a/n/ac 2x2 MU-MIMO (QCA9886, driver ath10k)">a/n/ac 2x2 MU-MIMO (QCA9886, driver ath10k)</td></tr>
+            <tr><td><strong>Ethernet</strong></td><td data-en="1× GbE (PHY RTL8211FS), 802.3at PoE" data-es="1× GbE (PHY RTL8211FS), 802.3at PoE">1× GbE (PHY RTL8211FS), 802.3at PoE</td></tr>
+            <tr><td><strong>Serial</strong></td><td data-en="PCB J4 — Pin1 TXD, Pin2 RXD, Pin3 GND, Pin4 VCC" data-es="PCB J4 — Pin1 TXD, Pin2 RXD, Pin3 GND, Pin4 VCC">PCB J4 — Pin1 TXD, Pin2 RXD, Pin3 GND, Pin4 VCC</td></tr>
+            <tr><td><strong>Serial config</strong></td><td><strong>3.3V</strong>, 115200 baud, 8N1</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="section" id="materials" data-spy>
+      <div class="section__head">
+        <h2 data-en="Materials" data-es="Materiales">Materials</h2>
+      </div>
+      <h3 data-en="Hardware" data-es="Hardware">Hardware</h3>
+      <ul>
+        <li data-en="USB-to-UART adapter (3.3V) — CP2102, FT232RL or CH340G. Must be 3.3V." data-es="Adaptador USB a UART (3.3V) — CP2102, FT232RL o CH340G. Debe ser de 3.3V.">USB-to-UART adapter (3.3V) — CP2102, FT232RL or CH340G. Must be 3.3V.</li>
+        <li data-en="Dupont jumper wires." data-es="Cables dupont (jumper wires).">Dupont jumper wires.</li>
+        <li data-en="Soldering iron + solder — J4 pads likely have no pins; solder pin headers or wires." data-es="Soldador + estaño — los pads J4 probablemente no tengan pines; hay que soldar headers o cables.">Soldering iron + solder — J4 pads likely have no pins; solder pin headers or wires.</li>
+        <li data-en="Ethernet cable — direct PC ↔ EAP225." data-es="Cable Ethernet — conexión directa PC ↔ EAP225.">Ethernet cable — direct PC ↔ EAP225.</li>
+        <li data-en="PoE injector or PoE switch — to power the EAP225." data-es="Inyector PoE o switch PoE — para alimentar el EAP225.">PoE injector or PoE switch — to power the EAP225.</li>
+      </ul>
+      <h3 data-en="Software" data-es="Software">Software</h3>
+      <ul>
+        <li data-en="picocom — serial terminal." data-es="picocom — terminal serial.">picocom — serial terminal.</li>
+        <li data-en="dnsmasq — TFTP server." data-es="dnsmasq — servidor TFTP.">dnsmasq — TFTP server.</li>
+        <li data-en="OpenWrt images for EAP225 v4 (initramfs + sysupgrade)." data-es="Imágenes de OpenWrt para EAP225 v4 (initramfs + sysupgrade).">OpenWrt images for EAP225 v4 (initramfs + sysupgrade).</li>
+      </ul>
+      <p data-en="Install the tools with your distribution's package manager, e.g.:" data-es="Instalá las herramientas con el gestor de paquetes de tu distribución, por ejemplo:">Install the tools with your distribution's package manager, e.g.:</p>
+      <div class="code-wrap"><pre>sudo apt install picocom dnsmasq wget   # Debian/Ubuntu
+sudo dnf install picocom dnsmasq wget   # Fedora
+sudo pacman -S picocom dnsmasq wget     # Arch</pre></div>
+      <p data-en="Add your user to the dialout group to access /dev/ttyUSB* (log out and back in after):" data-es="Agregá tu usuario al grupo dialout para acceder a /dev/ttyUSB* (cerrá sesión y volvé a entrar después):">Add your user to the dialout group to access /dev/ttyUSB* (log out and back in after):</p>
+      <div class="code-wrap"><pre>sudo usermod -aG dialout $USER</pre></div>
+    </section>
+
+    <section class="section" id="serial-check" data-spy>
+      <div class="section__head">
+        <h2 data-en="Verify the USB-UART adapter (multimeter)" data-es="Verificar el adaptador USB-UART (multímetro)">Verify the USB-UART adapter (multimeter)</h2>
+        <p data-en="Many cheap adapters claim 3.3V but ship configured for 5V. Verify before connecting." data-es="Muchos adaptadores baratos dicen ser de 3.3V pero salen configurados a 5V. Verificá antes de conectar.">Many cheap adapters claim 3.3V but ship configured for 5V. Verify before connecting.</p>
+      </div>
+      <ol>
+        <li data-en="Plug the adapter into the PC (nothing connected to the other end)." data-es="Conectá el adaptador a la PC (sin conectar nada al otro extremo).">Plug the adapter into the PC (nothing connected to the other end).</li>
+        <li data-en="Set the multimeter to DC voltage (20V range or auto)." data-es="Poné el multímetro en voltaje DC (rango 20V o auto).">Set the multimeter to DC voltage (20V range or auto).</li>
+        <li data-en="Measure VCC: red probe on VCC, black on GND. Expected ~3.3V (3.0–3.6). If ~5.0V → do NOT use." data-es="Medí VCC: punta roja en VCC, punta negra en GND. Esperado ~3.3V (3.0–3.6). Si ~5.0V → NO USAR.">Measure VCC: red probe on VCC, black on GND. Expected ~3.3V (3.0–3.6). If ~5.0V → do NOT use.</li>
+        <li data-en="Measure TXD at idle: red probe on TXD, black on GND. Expected ~3.3V." data-es="Medí TXD en reposo: punta roja en TXD, punta negra en GND. Esperado ~3.3V.">Measure TXD at idle: red probe on TXD, black on GND. Expected ~3.3V.</li>
+      </ol>
+      <div class="callout callout--danger">
+        <div class="callout__head">
+          <span class="callout__icon" aria-hidden="true">!</span>
+          <p class="callout__title" data-en="Golden rule" data-es="Regla de oro">Golden rule</p>
+        </div>
+        <p class="callout__body" data-en="If any reading is above 3.6V, do not connect that adapter to the EAP225. Get one that runs natively at 3.3V (CP2102 and FT232RL usually do)." data-es="Si alguna medición da más de 3.6V, no conectes ese adaptador al EAP225. Comprá uno que opere nativamente a 3.3V (los CP2102 y FT232RL generalmente vienen bien de fábrica).">If any reading is above 3.6V, do not connect that adapter to the EAP225. Get one that runs natively at 3.3V (CP2102 and FT232RL usually do).</p>
+      </div>
+    </section>
+
+    <section class="section" id="flash-guide" data-spy>
+      <div class="section__head">
+        <h2 data-en="Flash guide (serial + TFTP)" data-es="Guía de flasheo (serial + TFTP)">Flash guide (serial + TFTP)</h2>
+      </div>
+
+      <div class="phase">
+        <div class="phase__head">
+          <span class="phase__num">1</span>
+          <h3 data-en="Download the OpenWrt images" data-es="Descargar las imágenes de OpenWrt">Download the OpenWrt images</h3>
+        </div>
+        <div class="code-wrap"><pre>mkdir -p ~/openwrt-eap225v4 && cd ~/openwrt-eap225v4
+
+# initramfs (temporary boot from RAM)
+wget https://downloads.openwrt.org/releases/23.05.5/targets/ath79/generic/openwrt-23.05.5-ath79-generic-tplink_eap225-v4-initramfs-kernel.bin -O initramfs.bin
+
+# sysupgrade (permanent install)
+wget https://downloads.openwrt.org/releases/23.05.5/targets/ath79/generic/openwrt-23.05.5-ath79-generic-tplink_eap225-v4-squashfs-sysupgrade.bin -O sysupgrade.bin</pre></div>
+        <p data-en="Check the latest stable release on the firmware selector searching &quot;EAP225 v4&quot; and adjust the URLs." data-es="Chequeá la última release estable en el firmware selector buscando &quot;EAP225 v4&quot; y ajustá los URLs.">Check the latest stable release on the firmware selector searching &quot;EAP225 v4&quot; and adjust the URLs.</p>
+      </div>
+
+      <div class="phase">
+        <div class="phase__head">
+          <span class="phase__num">2</span>
+          <h3 data-en="Open the EAP225 and wire the serial" data-es="Abrir el EAP225 y cablear el serial">Open the EAP225 and wire the serial</h3>
+        </div>
+        <ol>
+          <li data-en="Disconnect power (unplug PoE)." data-es="Desconectar la alimentación (desenchufar el PoE).">Disconnect power (unplug PoE).</li>
+          <li data-en="Open the case — remove the rear screws." data-es="Abrir la carcasa — quitar los tornillos de la parte trasera.">Open the case — remove the rear screws.</li>
+          <li data-en="Locate header J4 on the PCB — 4 aligned pads:" data-es="Localizar el header J4 en el PCB — 4 pads alineados:">Locate header J4 on the PCB — 4 aligned pads:</li>
+        </ol>
+        <div class="code-wrap"><pre>J4: [ Pin1: TXD ] [ Pin2: RXD ] [ Pin3: GND ] [ Pin4: VCC ]</pre></div>
+        <p data-en="You may need to bridge unpopulated resistors R225 (TXD line) and R237 (RXD line). Solder pins or wires to J4, then connect:" data-es="Puede ser necesario puentear las resistencias no pobladas R225 (línea TXD) y R237 (línea RXD). Soldá pines o cables al J4, después conectá:">You may need to bridge unpopulated resistors R225 (TXD line) and R237 (RXD line). Solder pins or wires to J4, then connect:</p>
+        <div class="code-wrap"><pre>EAP225 J4 Pin1 (TXD)  →  RXD of the USB-UART adapter
+EAP225 J4 Pin2 (RXD)  →  TXD of the USB-UART adapter
+EAP225 J4 Pin3 (GND)  →  GND of the USB-UART adapter
+EAP225 J4 Pin4 (VCC)  →  DO NOT CONNECT (powered by PoE)</pre></div>
+      </div>
+
+      <div class="phase">
+        <div class="phase__head">
+          <span class="phase__num">3</span>
+          <h3 data-en="Open the serial terminal" data-es="Abrir la terminal serial">Open the serial terminal</h3>
+        </div>
+        <div class="code-wrap"><pre>ls /dev/ttyUSB*
+picocom -b 115200 /dev/ttyUSB0</pre></div>
+        <p data-en="Exit picocom with Ctrl+A then Ctrl+X. Do not power the EAP yet." data-es="Salir de picocom con Ctrl+A y después Ctrl+X. No alimentar el EAP todavía.">Exit picocom with Ctrl+A then Ctrl+X. Do not power the EAP yet.</p>
+      </div>
+
+      <div class="phase">
+        <div class="phase__head">
+          <span class="phase__num">4</span>
+          <h3 data-en="Configure the network and TFTP server" data-es="Configurar la red y el servidor TFTP">Configure the network and TFTP server</h3>
+        </div>
+        <p data-en="Connect the PC directly to the EAP225 with an ethernet cable." data-es="Conectá la PC directamente al EAP225 con cable Ethernet.">Connect the PC directly to the EAP225 with an ethernet cable.</p>
+        <p data-en="Set a static IP on your PC:" data-es="Configurá una IP estática en tu PC:">Set a static IP on your PC:</p>
+        <div class="code-wrap"><pre>sudo ip addr add 192.168.1.10/24 dev eth0   # replace eth0 with your interface
+</pre></div>
+        <p data-en="Open the firewall for TFTP:" data-es="Abrir el firewall para TFTP:">Open the firewall for TFTP:</p>
+        <div class="code-wrap"><pre>sudo firewall-cmd --add-service=tftp   # or ufw allow 69/udp</pre></div>
+        <p data-en="Start the TFTP server (keep this terminal running):" data-es="Levantar el servidor TFTP (dejar esta terminal corriendo):">Start the TFTP server (keep this terminal running):</p>
+        <div class="code-wrap"><pre>mkdir -p /tmp/tftp
+cp ~/openwrt-eap225v4/initramfs.bin /tmp/tftp/
+sudo dnsmasq --no-daemon --port=0 --enable-tftp --tftp-root=/tmp/tftp --listen-address=192.168.1.10</pre></div>
+      </div>
+
+      <div class="phase">
+        <div class="phase__head">
+          <span class="phase__num">5</span>
+          <h3 data-en="Access the U-Boot bootloader" data-es="Acceder al bootloader U-Boot">Access the U-Boot bootloader</h3>
+        </div>
+        <ol>
+          <li data-en="Have picocom open in another terminal." data-es="Tener picocom abierto en otra terminal.">Have picocom open in another terminal.</li>
+          <li data-en="Connect PoE power to the EAP225." data-es="Conectar la alimentación PoE al EAP225.">Connect PoE power to the EAP225.</li>
+          <li data-en="Immediately press Ctrl+B repeatedly in the serial terminal." data-es="Presionar Ctrl+B repetidamente e inmediatamente en la terminal serial.">Immediately press Ctrl+B repeatedly in the serial terminal.</li>
+          <li data-en="If you succeed, the U-Boot prompt appears:" data-es="Si lo lográs, aparece el prompt de U-Boot:">If you succeed, the U-Boot prompt appears:</li>
+        </ol>
+        <div class="code-wrap"><pre>ath></pre></div>
+        <p data-en="If it boots into stock firmware, disconnect PoE, wait a few seconds, reconnect while spamming Ctrl+B." data-es="Si arranca el firmware stock, desconectá el PoE, esperá unos segundos y volvé a conectar mientras spameás Ctrl+B.">If it boots into stock firmware, disconnect PoE, wait a few seconds, reconnect while spamming Ctrl+B.</p>
+      </div>
+
+      <div class="phase">
+        <div class="phase__head">
+          <span class="phase__num">6</span>
+          <h3 data-en="Load OpenWrt over TFTP" data-es="Cargar OpenWrt por TFTP">Load OpenWrt over TFTP</h3>
+        </div>
+        <p data-en="At the ath> prompt:" data-es="En el prompt ath>:">At the ath> prompt:</p>
+        <div class="code-wrap"><pre>ath> setenv ipaddr 192.168.1.1
+ath> setenv serverip 192.168.1.10
+ath> tftp 0x80800000 initramfs.bin
+ath> bootelf $fileaddr</pre></div>
+        <ul>
+          <li data-en="setenv ipaddr — IP used by the EAP225 for the transfer." data-es="setenv ipaddr — IP que usa el EAP225 para la transferencia.">setenv ipaddr — IP used by the EAP225 for the transfer.</li>
+          <li data-en="setenv serverip — IP of your PC (TFTP server)." data-es="setenv serverip — IP de tu PC (servidor TFTP).">setenv serverip — IP of your PC (TFTP server).</li>
+          <li data-en="tftp — downloads the image into the EAP225's RAM." data-es="tftp — descarga la imagen a la RAM del EAP225.">tftp — downloads the image into the EAP225's RAM.</li>
+          <li data-en="bootelf — boots OpenWrt from RAM." data-es="bootelf — arranca OpenWrt desde la RAM.">bootelf — boots OpenWrt from RAM.</li>
+        </ul>
+        <p data-en="This is temporary — OpenWrt runs from RAM and has not touched the flash yet. The dnsmasq terminal shows the transfer; the serial terminal shows the kernel booting." data-es="Esto es temporario — OpenWrt corre desde la RAM, no tocó la flash todavía. La terminal de dnsmasq muestra la transferencia; la terminal serial muestra el kernel arrancando.">This is temporary — OpenWrt runs from RAM and has not touched the flash yet. The dnsmasq terminal shows the transfer; the serial terminal shows the kernel booting.</p>
+      </div>
+
+      <div class="phase">
+        <div class="phase__head">
+          <span class="phase__num">7</span>
+          <h3 data-en="Install OpenWrt permanently" data-es="Instalar OpenWrt permanentemente">Install OpenWrt permanently</h3>
+        </div>
+        <p data-en="OpenWrt now runs (temporarily) and is reachable at 192.168.1.1." data-es="Ahora el EAP225 corre OpenWrt (temporal) y es accesible en 192.168.1.1.">OpenWrt now runs (temporarily) and is reachable at 192.168.1.1.</p>
+        <h4 data-en="Option A — via SSH (recommended)" data-es="Opción A — por SSH (recomendada)">Option A — via SSH (recommended)</h4>
+        <div class="code-wrap"><pre>ping -c 3 192.168.1.1
+scp ~/openwrt-eap225v4/sysupgrade.bin root@192.168.1.1:/tmp/
+ssh root@192.168.1.1
+# inside the device:
+sysupgrade -v /tmp/sysupgrade.bin</pre></div>
+        <h4 data-en="Option B — via web UI (LuCI)" data-es="Opción B — por interfaz web (LuCI)">Option B — via web UI (LuCI)</h4>
+        <ol>
+          <li data-en="Open http://192.168.1.1." data-es="Abrir http://192.168.1.1.">Open http://192.168.1.1.</li>
+          <li data-en="Go to System → Backup/Flash Firmware." data-es="Ir a System → Backup/Flash Firmware.">Go to System → Backup/Flash Firmware.</li>
+          <li data-en="Upload sysupgrade.bin and confirm." data-es="Subir sysupgrade.bin y confirmar.">Upload sysupgrade.bin and confirm.</li>
+        </ol>
+        <p data-en="The device reboots and this time boots OpenWrt from internal flash." data-es="El equipo se reinicia y esta vez arranca OpenWrt desde la flash interna.">The device reboots and this time boots OpenWrt from internal flash.</p>
+      </div>
+
+      <div class="phase">
+        <div class="phase__head">
+          <span class="phase__num">8</span>
+          <h3 data-en="First login to OpenWrt" data-es="Primer ingreso a OpenWrt">First login to OpenWrt</h3>
+        </div>
+        <ol>
+          <li data-en="Wait for the LED to stabilize." data-es="Esperar a que el LED se estabilice.">Wait for the LED to stabilize.</li>
+          <li data-en="Go to http://192.168.1.1." data-es="Ir a http://192.168.1.1.">Go to http://192.168.1.1.</li>
+          <li data-en="User: root, no password." data-es="Usuario: root, sin contraseña.">User: root, no password.</li>
+          <li data-en="Set a password immediately under System → Administration." data-es="Configurar contraseña inmediatamente en System → Administration.">Set a password immediately under System → Administration.</li>
+        </ol>
+      </div>
+
+      <div class="phase">
+        <div class="phase__head">
+          <span class="phase__num">9</span>
+          <h3 data-en="Clean up" data-es="Limpiar el entorno">Clean up</h3>
+        </div>
+        <div class="code-wrap"><pre># Remove the temporary network connection:
+sudo ip addr del 192.168.1.10/24 dev eth0
+
+# Stop dnsmasq: Ctrl+C in its terminal
+# Exit picocom: Ctrl+A, Ctrl+X</pre></div>
+      </div>
+    </section>
+
+    <section class="section" id="troubleshooting" data-spy>
+      <div class="section__head">
+        <h2 data-en="Troubleshooting" data-es="Solución de problemas">Troubleshooting</h2>
+      </div>
+      <ul>
+        <li data-en="Cannot interrupt U-Boot (Ctrl+B): retry, disconnecting and reconnecting PoE while spamming Ctrl+B." data-es="No se puede interrumpir U-Boot (Ctrl+B): reintentar, desconectando y reconectando PoE mientras se spamea Ctrl+B.">Cannot interrupt U-Boot (Ctrl+B): retry, disconnecting and reconnecting PoE while spamming Ctrl+B.</li>
+        <li data-en="TFTP transfer fails: check firewall, IP addresses (192.168.1.1 / 192.168.1.10) and that dnsmasq is running." data-es="La transferencia TFTP falla: verificar firewall, direcciones IP (192.168.1.1 / 192.168.1.10) y que dnsmasq esté corriendo.">TFTP transfer fails: check firewall, IP addresses (192.168.1.1 / 192.168.1.10) and that dnsmasq is running.</li>
+        <li data-en="No serial output: check TX/RX crossover (TXD→RXD), GND, baud rate 115200, and resistor bridges R225/R237." data-es="Sin salida serial: verificar cruce TX/RX (TXD→RXD), GND, baud rate 115200 y puentes de resistencias R225/R237.">No serial output: check TX/RX crossover (TXD→RXD), GND, baud rate 115200, and resistor bridges R225/R237.</li>
+        <li data-en="Device does not boot after sysupgrade: re-run the TFTP process from step 5." data-es="El equipo no arranca después del sysupgrade: repetir el proceso TFTP desde el paso 5.">Device does not boot after sysupgrade: re-run the TFTP process from step 5.</li>
+      </ul>
+    </section>
+
+    <section class="section" id="revert" data-spy>
+      <div class="section__head">
+        <h2 data-en="Back to stock / last resort" data-es="Volver al stock / último recurso">Back to stock / last resort</h2>
+      </div>
+      <p data-en="There is no TP-Link recovery mode after flashing OpenWrt. Options to restore stock firmware:" data-es="No hay modo de recuperación de TP-Link después de flashear OpenWrt. Opciones para restaurar el firmware stock:">There is no TP-Link recovery mode after flashing OpenWrt. Options to restore stock firmware:</p>
+      <ul>
+        <li data-en="If you made a full flash backup before flashing, restore it with an SPI programmer (clip SOIC-8 + CH341A at 3.3V, or Raspberry Pi + flashrom)." data-es="Si hiciste un backup completo de la flash antes de flashear, restauralo con un programador SPI (clip SOIC-8 + CH341A a 3.3V, o Raspberry Pi + flashrom).">If you made a full flash backup before flashing, restore it with an SPI programmer (clip SOIC-8 + CH341A at 3.3V, or Raspberry Pi + flashrom).</li>
+        <li data-en="Otherwise, re-flashing stock requires the original firmware image written to the SPI-NOR chip directly." data-es="Si no, re-flashear el stock requiere escribir la imagen original del firmware directamente al chip SPI-NOR.">Otherwise, re-flashing stock requires the original firmware image written to the SPI-NOR chip directly.</li>
+      </ul>
+      <p data-en="U-Boot is not blocked on this device, so the serial method remains available even after a bad flash." data-es="U-Boot no está bloqueado en este equipo, así que el método serial sigue disponible incluso después de un flasheo fallido.">U-Boot is not blocked on this device, so the serial method remains available even after a bad flash.</p>
+    </section>
+
+    <section class="part" id="part-2" data-spy>
+      <p class="part__kicker" data-en="Part 2" data-es="Parte 2">Part 2</p>
+      <div class="part__row">
+        <span class="part__num" aria-hidden="true">02</span>
+        <div>
+          <h2 data-en="First boot &amp; basic configuration" data-es="Primer arranque y configuración básica">First boot &amp; basic configuration</h2>
+          <p data-en="Minimal steps after OpenWrt is running. Everything else is fine on its defaults." data-es="Pasos mínimos después de que OpenWrt está corriendo. Todo lo demás queda bien por default.">Minimal steps after OpenWrt is running. Everything else is fine on its defaults.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section config" id="first-boot" data-spy>
+      <div class="section__head">
+        <h2 data-en="First boot" data-es="Primer arranque">First boot</h2>
+      </div>
+      <ol>
+        <li data-en="Wait for the LED to stabilize after sysupgrade." data-es="Esperar a que el LED se estabilice después del sysupgrade.">Wait for the LED to stabilize after sysupgrade.</li>
+        <li data-en="Browse to http://192.168.1.1 (LuCI). Log in as root with no password." data-es="Navegar a http://192.168.1.1 (LuCI). Ingresar como root sin contraseña.">Browse to http://192.168.1.1 (LuCI). Log in as root with no password.</li>
+        <li data-en="Set a root password: System → Administration." data-es="Configurar contraseña de root: System → Administration.">Set a root password: System → Administration.</li>
+        <li data-en="Enable Wi-Fi if needed: Network → Wireless → enable the radios (radio0 2.4 GHz, radio1 5 GHz)." data-es="Habilitar Wi-Fi si se necesita: Network → Wireless → habilitar las radios (radio0 2.4 GHz, radio1 5 GHz).">Enable Wi-Fi if needed: Network → Wireless → enable the radios (radio0 2.4 GHz, radio1 5 GHz).</li>
+      </ol>
+    </section>
+
+    <section class="section config" id="basic-config" data-spy>
+      <div class="section__head">
+        <h2 data-en="Basic configuration" data-es="Configuración básica">Basic configuration</h2>
+        <p data-en="Only the settings that change. The EAP225 is an access point, so keep it simple." data-es="Solo los ajustes que cambian. El EAP225 es un punto de acceso, así que mantenelo simple.">Only the settings that change. The EAP225 is an access point, so keep it simple.</p>
+      </div>
+      <ul>
+        <li data-en="Set the device as a dumb AP if you already have a router: disable DHCP on LAN, assign a static IP in your subnet, and bridge the wireless interfaces to LAN." data-es="Configurar como dumb AP si ya tenés un router: deshabilitar DHCP en LAN, asignar IP estática en tu subred y puentear las interfaces wireless a LAN.">Set the device as a dumb AP if you already have a router: disable DHCP on LAN, assign a static IP in your subnet, and bridge the wireless interfaces to LAN.</li>
+        <li data-en="Set the timezone and NTP: System → System → Timezone; Services → NTP (or install chrony-nts for NTS)." data-es="Configurar zona horaria y NTP: System → System → Timezone; Services → NTP (o instalar chrony-nts para NTS).">Set the timezone and NTP: System → System → Timezone; Services → NTP (or install chrony-nts for NTS).</li>
+        <li data-en="Update packages: System → Software → Update lists, then upgrade." data-es="Actualizar paquetes: System → Software → Update lists, después upgrade.">Update packages: System → Software → Update lists, then upgrade.</li>
+      </ul>
+    </section>
+  </main>
+
+</div>
+
+<footer class="site-footer">
+  <div class="footer__inner">
+    <div>
+      <p data-en="Flashing method based on the OpenWrt community work for the EAP225 (serial console + U-Boot + TFTP). See the &lt;a href='https://openwrt.org/toh/tp-link/eap225'&gt;OpenWrt wiki&lt;/a&gt; and forum threads. Licensed under &lt;a href='https://www.gnu.org/licenses/old-licenses/gpl-2.0.html'&gt;GPL-2.0&lt;/a&gt;." data-es="Método de flasheo basado en el trabajo de la comunidad OpenWrt para el EAP225 (consola serial + U-Boot + TFTP). Ver la &lt;a href='https://openwrt.org/toh/tp-link/eap225'&gt;wiki de OpenWrt&lt;/a&gt; y los hilos del foro. Licencia &lt;a href='https://www.gnu.org/licenses/old-licenses/gpl-2.0.html'&gt;GPL-2.0&lt;/a&gt;.">Flashing method based on the OpenWrt community work for the EAP225 (serial console + U-Boot + TFTP). See the <a href="https://openwrt.org/toh/tp-link/eap225">OpenWrt wiki</a> and forum threads. Licensed under <a href="https://www.gnu.org/licenses/old-licenses/gpl-2.0.html">GPL-2.0</a>.</p>
+      <div class="footer__meta">
+        <span>EAP225 v4</span>
+        <span>OpenWrt 23.05.5</span>
+        <span>GPL-2.0</span>
+      </div>
+    </div>
+    <a class="footer__top" href="#top" data-en="Back to top ↑" data-es="Volver arriba ↑">Back to top ↑</a>
+  </div>
+</footer>
+
+<button class="back-to-top" id="backToTop" type="button" aria-label="Back to top">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5m-7 7 7-7 7 7"/></svg>
+</button>
+
+<script>
+(function () {
+  'use strict';
+
+  // ============================================================
+  // Language
+  // ============================================================
+  var currentLang = 'en';
+  try { currentLang = localStorage.getItem('eap225-lang') || 'en'; } catch (e) {}
+
+  var UI = {
+    en: { copy: 'Copy', copied: 'Copied!', manual: 'Copy manually', light: 'Switch to light theme', dark: 'Switch to dark theme', top: 'Back to top' },
+    es: { copy: 'Copiar', copied: '¡Copiado!', manual: 'Copiá manual', light: 'Cambiar a tema claro', dark: 'Cambiar a tema oscuro', top: 'Volver arriba' }
+  };
+
+  function setLang(lang) {
+    currentLang = (lang === 'es') ? 'es' : 'en';
+    try { localStorage.setItem('eap225-lang', currentLang); } catch (e) {}
+
+    document.documentElement.lang = currentLang;
+    if (currentLang === 'es') {
+      document.title = 'EAP225 v4 — Guía de OpenWrt';
+    } else {
+      document.title = 'EAP225 v4 — OpenWrt guide';
+    }
+
+    var nodes = document.querySelectorAll('[data-en]');
+    for (var i = 0; i < nodes.length; i++) {
+      var value = nodes[i].getAttribute('data-' + currentLang);
+      if (value !== null) nodes[i].innerHTML = value;
+    }
+
+    var btnEn = document.getElementById('langEn');
+    var btnEs = document.getElementById('langEs');
+    if (btnEn && btnEs) {
+      btnEn.classList.toggle('is-active', currentLang === 'en');
+      btnEs.classList.toggle('is-active', currentLang === 'es');
+      btnEn.setAttribute('aria-pressed', currentLang === 'en' ? 'true' : 'false');
+      btnEs.setAttribute('aria-pressed', currentLang === 'es' ? 'true' : 'false');
+    }
+
+    var labels = document.querySelectorAll('.cp-label');
+    for (var j = 0; j < labels.length; j++) labels[j].textContent = UI[currentLang].copy;
+
+    var codeButtons = document.querySelectorAll('.copy-code');
+    for (var k = 0; k < codeButtons.length; k++) codeButtons[k].setAttribute('aria-label', UI[currentLang].copy);
+
+    syncThemeButton();
+    syncBackToTop();
+  }
+
+  // ============================================================
+  // Theme
+  // ============================================================
+  var themeToggle = document.getElementById('themeToggle');
+
+  function currentTheme() {
+    return document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+  }
+
+  function syncThemeButton() {
+    if (!themeToggle) return;
+    themeToggle.setAttribute('aria-label', currentTheme() === 'dark' ? UI[currentLang].light : UI[currentLang].dark);
+    themeToggle.setAttribute('title', themeToggle.getAttribute('aria-label'));
+  }
+
+  if (themeToggle) {
+    themeToggle.addEventListener('click', function () {
+      var next = currentTheme() === 'dark' ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-theme', next);
+      try { localStorage.setItem('eap225-theme', next); } catch (e) {}
+      syncThemeButton();
+    });
+  }
+
+  document.getElementById('langEn').addEventListener('click', function () { setLang('en'); });
+  document.getElementById('langEs').addEventListener('click', function () { setLang('es'); });
+
+  // ============================================================
+  // Clipboard helpers
+  // ============================================================
+  function writeClipboard(text) {
+    if (navigator.clipboard && window.isSecureContext) {
+      return navigator.clipboard.writeText(text);
+    }
+    return new Promise(function (resolve, reject) {
+      var area = document.createElement('textarea');
+      area.value = text;
+      area.setAttribute('readonly', '');
+      area.style.position = 'fixed';
+      area.style.top = '-1000px';
+      area.style.opacity = '0';
+      document.body.appendChild(area);
+      area.select();
+      try {
+        var ok = document.execCommand('copy');
+        document.body.removeChild(area);
+        ok ? resolve() : reject();
+      } catch (e) {
+        document.body.removeChild(area);
+        reject(e);
+      }
+    });
+  }
+
+  function flashLabel(button, text, resetText) {
+    var label = button.querySelector('.cp-label') || button;
+    label.textContent = text;
+    window.setTimeout(function () { label.textContent = resetText; }, 1600);
+  }
+
+  function copyFrom(id, button) {
+    var source = document.getElementById(id);
+    if (!source) return;
+    var text = source.textContent;
+    if (!text || text === '—') return;
+    writeClipboard(text).then(function () {
+      flashLabel(button, UI[currentLang].copied, UI[currentLang].copy);
+    }).catch(function () {
+      flashLabel(button, UI[currentLang].manual, UI[currentLang].copy);
+    });
+  }
+
+  var copyButtons = document.querySelectorAll('[data-copy]');
+  for (var c = 0; c < copyButtons.length; c++) {
+    (function (button) {
+      button.addEventListener('click', function () {
+        copyFrom(button.getAttribute('data-copy'), button);
+      });
+    })(copyButtons[c]);
+  }
+
+  // ============================================================
+  // Code block enhancement (copy button)
+  // ============================================================
+  var preBlocks = document.querySelectorAll('pre');
+  for (var p = 0; p < preBlocks.length; p++) {
+    (function (pre) {
+      var wrap = (pre.parentElement && pre.parentElement.classList.contains('code-wrap')) ? pre.parentElement : null;
+      if (!wrap) {
+        wrap = document.createElement('div');
+        wrap.className = 'code-wrap';
+        pre.parentNode.insertBefore(wrap, pre);
+        wrap.appendChild(pre);
+      }
+      pre.classList.add('code-block');
+      if (wrap.querySelector('.copy-code')) return;
+
+      var button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'copy-code';
+      button.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg><span class="cp-label">' + UI[currentLang].copy + '</span>';
+      button.setAttribute('aria-label', UI[currentLang].copy);
+
+      button.addEventListener('click', function () {
+        writeClipboard(pre.innerText).then(function () {
+          flashLabel(button, UI[currentLang].copied, UI[currentLang].copy);
+        }).catch(function () {
+          flashLabel(button, UI[currentLang].manual, UI[currentLang].copy);
+        });
+      });
+
+      wrap.appendChild(button);
+    })(preBlocks[p]);
+  }
+
+  // ============================================================
+  // Mobile table of contents
+  // ============================================================
+  var mobileToc = document.querySelector('.toc-mobile');
+  if (mobileToc) {
+    var mobileLinks = mobileToc.querySelectorAll('a');
+    for (var m = 0; m < mobileLinks.length; m++) {
+      mobileLinks[m].addEventListener('click', function () { mobileToc.open = false; });
+    }
+  }
+
+  // ============================================================
+  // Scroll progress, header state, back-to-top, scrollspy
+  // ============================================================
+  var progressBar = document.getElementById('progressBar');
+  var siteHeader = document.getElementById('siteHeader');
+  var backToTop = document.getElementById('backToTop');
+  var spySections = Array.prototype.slice.call(document.querySelectorAll('[data-spy]'));
+  var tocLinks = Array.prototype.slice.call(document.querySelectorAll('.toc a[href^="#"]'));
+
+  function syncBackToTop() {
+    if (!backToTop) return;
+    backToTop.setAttribute('aria-label', UI[currentLang].top);
+    backToTop.setAttribute('title', UI[currentLang].top);
+  }
+
+  function setActiveLink(id) {
+    for (var i = 0; i < tocLinks.length; i++) {
+      tocLinks[i].classList.toggle('is-active', tocLinks[i].getAttribute('href') === '#' + id);
+    }
+  }
+
+  var ticking = false;
+  function updateOnScroll() {
+    ticking = false;
+    var doc = document.documentElement;
+    var scrollTop = window.pageYOffset || doc.scrollTop || 0;
+    var max = doc.scrollHeight - doc.clientHeight;
+    var ratio = max > 0 ? scrollTop / max : 0;
+
+    if (progressBar) progressBar.style.transform = 'scaleX(' + ratio + ')';
+    if (siteHeader) siteHeader.classList.toggle('is-scrolled', scrollTop > 8);
+    if (backToTop) backToTop.classList.toggle('is-visible', scrollTop > 640);
+
+    var marker = scrollTop + 140;
+    var activeId = '';
+    for (var s = 0; s < spySections.length; s++) {
+      if (spySections[s].offsetTop <= marker) activeId = spySections[s].id;
+    }
+    if (activeId) setActiveLink(activeId);
+  }
+
+  function requestUpdate() {
+    if (!ticking) {
+      ticking = true;
+      window.requestAnimationFrame(updateOnScroll);
+    }
+  }
+
+  window.addEventListener('scroll', requestUpdate, { passive: true });
+  window.addEventListener('resize', requestUpdate);
+
+  if (backToTop) {
+    backToTop.addEventListener('click', function () {
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    });
+  }
+
+  // ============================================================
+  // Boot
+  // ============================================================
+  syncThemeButton();
+  syncBackToTop();
+  setLang(currentLang);
+  updateOnScroll();
+})();
+</script>
+</body>
+</html>

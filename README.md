@@ -1,304 +1,178 @@
-# OpenWrt en TP-Link Omada EAP225 v4.0 (firmware stock 5.2.3)
+# TP-Link EAP225 v4 → OpenWrt
 
-**Dispositivo:** TP-Link Omada EAP225 — Hardware v4.0  
-**Firmware stock:** 5.2.3 Build 20250709 Rel. 67584(5553)  
-**SO del operador:** Fedora Silverblue (con toolbox/distrobox)  
-**Fecha:** Marzo 2026
+**From stock firmware 5.2.x to OpenWrt — flashing over the serial console, plus a minimal first-boot setup.**
 
----
+![Hardware](https://img.shields.io/badge/hardware-TP--Link%20EAP225%20v4-0ea5e9?style=flat-square)
+![OpenWrt](https://img.shields.io/badge/OpenWrt-23.05.5-00b5e2?style=flat-square)
+![Target](https://img.shields.io/badge/target-ath79%2Fgeneric-2dd4bf?style=flat-square)
+[![License](https://img.shields.io/badge/license-GPL--2.0-64748b?style=flat-square)](https://www.gnu.org/licenses/old-licenses/gpl-2.0.html)
 
-## Respuesta corta
+> **Interactive guide:** <https://nicobm.github.io/eap225-v4-openwrt>
+>
+> The web version walks through every step with code blocks you can copy, safety callouts, and the multimeter check for the USB-UART adapter. It is bilingual: English by default, with a Spanish toggle.
+>
+> This README is the condensed version.
 
-**OpenWrt soporta el EAP225 v4** oficialmente desde 2022 (target `ath79/generic`).
-**El firmware 5.2.3 BLOQUEA el método estándar de instalación por software.**
-Se necesita acceso físico al hardware (consola serial) para flashear.
+This repository is intentionally minimalist: **only the steps that change are documented. Everything not mentioned is fine on its defaults.**
 
----
-
-## Qué dice Gemini vs. la realidad
-
-Gemini te dio una guía que corresponde a firmwares **anteriores al 5.2.x** y presenta
-varios errores importantes:
-
-| Afirmación de Gemini | Veredicto | Realidad |
+| Part | What it covers | Serial access required |
 |---|---|---|
-| "SSH + `cliclientd stopcs` debería funcionar" | **INCORRECTO** | El firmware 5.2.x reemplazó el shell Linux por una CLI propietaria restrictiva. `cliclientd stopcs` devuelve "Invalid command". No hay acceso a shell Linux por SSH. |
-| "Como es un build reciente, el método por SSH debería funcionar perfectamente" | **INCORRECTO** | Es exactamente al revés: cuanto más nuevo el firmware, más bloqueado está. El 5.2.x es el que rompió el método. |
-| "Plan B: TFTP con botón reset" | **NO CONFIRMADO para EAP225 v4** | TP-Link documenta el recovery TFTP por botón de reset solo para EAP225 **v5**, EAP245 v3/v4, EAP265HD v1, y modelos 802.11AX. El EAP225 **v4 no aparece en esa lista**. |
-| No menciona consola serial | **OMISIÓN GRAVE** | La consola serial + U-Boot es el único método confirmado para flashear el EAP225 v4 cuando el método por software no funciona. |
-| Implica que se puede hacer downgrade a 5.0.3 | **INCORRECTO** | El firmware 5.2.x prohíbe explícitamente el downgrade: "After upgrading this firmware, rolling back to any of the previous version is forbidden." |
-| IP por defecto `192.168.0.254` | Correcto | Es la IP del EAP en modo standalone. OpenWrt después usa `192.168.1.1`. |
-
-**En resumen: la guía de Gemini NO funciona con tu firmware 5.2.3.**
+| **1. Flashing** | Replace the stock TP-Link firmware with OpenWrt over the serial console + U-Boot + TFTP. Specific to the EAP225 v4 hardware. | Yes |
+| **2. First boot** | Minimal setup after OpenWrt is running. | No |
 
 ---
 
-## Especificaciones del EAP225 v4
+## Contents
 
-| Componente | Detalle |
+- [Part 1 — Flashing OpenWrt](#part-1--flashing-openwrt)
+  - [Requirements](#requirements)
+  - [Before you start](#before-you-start)
+  - [Firmware situation](#firmware-situation)
+  - [Specifications](#specifications)
+  - [Materials](#materials)
+  - [Verify the USB-UART adapter](#verify-the-usb-uart-adapter)
+  - [Flash steps](#flash-steps)
+  - [Back to stock / last resort](#back-to-stock--last-resort)
+- [Part 2 — First boot & basic configuration](#part-2--first-boot--basic-configuration)
+- [Credits and license](#credits-and-license)
+
+---
+
+## Part 1 — Flashing OpenWrt
+
+> This is the only part that needs hardware access (serial console + soldering). The whole setup in Part 2 is done through the LuCI web GUI.
+
+### Requirements
+
+- TP-Link Omada EAP225 **hardware v4.0** (any hardware revision; only the firmware matters).
+- Stock firmware **5.2.3** (Build 20250709) — the guide targets this version. Firmware 5.2.x blocks the software method; serial is required.
+- A Linux PC, a USB-to-UART adapter (3.3V), dupont wires, soldering iron, ethernet cable, and a PoE injector/switch.
+- Tools: `picocom`, `dnsmasq`, `wget`, `scp`, `ssh`.
+
+### Before you start
+
+> [!WARNING]
+> **Use a 3.3V USB-UART adapter.** The EAP225 v4 SoC (QCA9563) runs at 3.3V. A 5V adapter can permanently damage it. Verify with a multimeter before connecting anything.
+
+> [!CAUTION]
+> **There is no factory recovery after flashing.** Keep a full flash backup if you want to go back to stock; otherwise restoring requires an SPI programmer.
+
+> [!CAUTION]
+> **A power loss can brick the device.** Use a stable PoE source and do not disconnect anything during the process.
+
+### Firmware situation
+
+On firmware ≤ 5.1.6, SSH gave a full Linux shell where you could run `cliclientd stopcs` and then flash OpenWrt from the web UI. From 5.2.x onward, TP-Link removed the Linux shell, removed `cliclientd`, and blocked downgrade. Hence the serial method.
+
+| Stock firmware | SSH + `cliclientd` + web | Serial + U-Boot | TFTP recovery (reset button) |
+|---|---|---|---|
+| ≤ 5.1.6 | Works | Works | Not documented for v4 |
+| 5.2.x | Blocked | **Works ← your path** | Not documented for v4 |
+
+### Specifications
+
+| Component | Detail |
 |---|---|
 | SoC | QCA9563 @ 775 MHz |
 | RAM | 128 MiB DDR2 |
 | Flash | 16 MiB SPI-NOR |
-| WiFi 2.4 GHz | b/g/n 3x3 (integrado en SoC, driver `ath9k`) |
+| WiFi 2.4 GHz | b/g/n 3x3 (integrated, driver `ath9k`) |
 | WiFi 5 GHz | a/n/ac 2x2 MU-MIMO (QCA9886, driver `ath10k`) |
-| Ethernet | 1× GbE (PHY: RTL8211FS), 802.3at PoE |
-| Serial | PCB J4 — Pin 1: TXD, Pin 2: RXD, Pin 3: GND, Pin 4: VCC |
+| Ethernet | 1× GbE (PHY RTL8211FS), 802.3at PoE |
+| Serial | PCB J4 — Pin1 TXD, Pin2 RXD, Pin3 GND, Pin4 VCC |
 | Serial config | **3.3V**, 115200 baud, 8N1 |
 
----
+### Materials
 
-## Qué cambió en el firmware 5.2.x
+**Hardware:** 3.3V USB-UART adapter (CP2102/FT232RL/CH340G), dupont wires, soldering iron + solder, ethernet cable, PoE injector/switch.
 
-En versiones anteriores (hasta la 5.1.6), al conectar por SSH se obtenía un shell
-Linux completo donde se podía ejecutar `cliclientd stopcs` y después flashear
-OpenWrt por la interfaz web.
+**Software:** `picocom`, `dnsmasq`, `wget`, OpenWrt images for EAP225 v4.
 
-A partir del firmware 5.2.x, TP-Link:
-
-1. **Eliminó el shell Linux** por SSH — ahora se accede a una CLI propietaria
-   (prompt `EAP>` / `EAP#`) tipo Cisco.
-2. **Eliminó el comando `cliclientd`** — no existe en la nueva CLI.
-3. **Bloqueó el downgrade** — no se puede volver a ninguna versión anterior.
-4. Comandos Linux (`ls`, `cat`, `sh`, `/bin/sh`) no funcionan.
-5. El modo `enable` solo expone comandos `show` de diagnóstico.
-
----
-
-## MÉTODO: Consola serial + TFTP + U-Boot
-
-Este es el método que usó el desarrollador original que agregó soporte del EAP225 v4
-a OpenWrt. Bypasea completamente el firmware stock accediendo al bootloader U-Boot
-a través del puerto serial del PCB.
-
-### Materiales necesarios
-
-**Hardware:**
-
-- **Adaptador USB a UART (3.3V)** — CP2102, FT232RL, o CH340G.
-  **CRÍTICO: debe ser de 3.3V. A 5V podés dañar el SoC.**
-- **Cables dupont** (jumper wires)
-- **Soldador + estaño** — los pads J4 probablemente no tengan pines.
-  Necesitás soldar pin headers o cables.
-- **Cable Ethernet** — conexión directa PC ↔ EAP225.
-- **Inyector PoE o switch PoE** — para alimentar el EAP225.
-
-**Software (todo FLOSS, dentro de un toolbox):**
-
-- `picocom` — terminal serial
-- `dnsmasq` — servidor TFTP
-- Imágenes de OpenWrt para EAP225 v4
-
----
-
-### Paso 0: Preparar el entorno en Fedora Silverblue
+Install the tools with your package manager:
 
 ```bash
-# Crear un toolbox dedicado
-toolbox create openwrt-flash
-toolbox enter openwrt-flash
-
-# Instalar herramientas
-sudo dnf install -y picocom dnsmasq wget openssh-clients
+sudo apt install picocom dnsmasq wget   # Debian/Ubuntu
+sudo dnf install picocom dnsmasq wget   # Fedora
+sudo pacman -S picocom dnsmasq wget     # Arch
 ```
 
-Permisos del puerto serial (esto se hace en el **HOST**, fuera del toolbox):
+Add your user to the `dialout` group to access `/dev/ttyUSB*` (log out and back in):
 
 ```bash
-# En el HOST:
 sudo usermod -aG dialout $USER
-# Cerrar sesión y volver a iniciar para que tome efecto.
-# Los dispositivos /dev/ttyUSB* son visibles dentro del toolbox,
-# pero los permisos del grupo dialout se resuelven en el host.
 ```
 
----
+### Verify the USB-UART adapter
 
-### Paso 0.5: Verificar el adaptador USB-UART con multímetro
+Plug the adapter in (nothing connected). Measure with a multimeter in DC voltage mode:
 
-Antes de conectar nada al EAP225, verificá que tu adaptador realmente opere a
-3.3V. Muchos adaptadores CH341A genéricos (los verdes baratos) dicen ser de 3.3V
-pero salen de fábrica configurados a 5V. Conectar 5V al SoC QCA9563 puede dañarlo
-de forma irreversible.
+- **VCC vs GND:** expected ~3.3V (3.0–3.6). If ~5.0V → do not use.
+- **TXD vs GND (idle):** expected ~3.3V.
 
-**Necesitás:** multímetro digital (cualquiera sirve).
+If any reading is above 3.6V, do not connect that adapter to the EAP225.
 
-#### Qué medir
+### Flash steps
 
-1. **Conectar el adaptador USB-UART a la PC** (sin conectar nada al otro extremo).
-2. **Poner el multímetro en modo voltaje DC** (símbolo V con línea recta, o VDC).
-   Rango: 20V o auto.
-3. **Medir VCC:** Punta roja en el pin VCC del adaptador, punta negra en GND.
-   - **Esperado: ~3.3V** (entre 3.0V y 3.6V está bien)
-   - Si marca ~5.0V → **NO CONECTAR** al EAP225.
-4. **Medir TXD en reposo:** Punta roja en TXD, punta negra en GND.
-   - **Esperado: ~3.3V** (el estado idle de una línea UART es alto)
-   - Si marca ~5.0V → el nivel lógico es de 5V, no sirve.
-
-#### Qué hacer si marca 5V
-
-| Adaptador | Solución |
-|---|---|
-| **CH341A (placa verde)** | Algunos tienen un jumper o pad para seleccionar 3.3V/5V. Otros necesitan cortar una pista y puentear. Buscá tu modelo específico + "3.3V mod". Si no tiene forma de cambiarlo, **no lo uses**. |
-| **FT232RL** | Generalmente tienen un jumper o solder bridge para seleccionar voltaje. Verificá el datasheet de tu placa. |
-| **CP2102** | La mayoría opera a 3.3V por defecto. Si mide 3.3V, estás bien. |
-| **Adaptador con switch/jumper** | Poné el switch en 3.3V y volvé a medir. |
-
-#### Medición rápida de continuidad (opcional pero recomendada)
-
-Antes de conectar al EAP225, verificá que no haya cortocircuitos en tus cables:
-
-1. **Multímetro en modo continuidad** (símbolo de onda/beep).
-2. Verificá que los cables que van de TXD, RXD y GND **no se tocan entre sí**
-   — cada uno debe ir a su pin correspondiente sin cruzarse.
-3. Verificá que **ningún cable toque el pin VCC** del header J4.
-
-#### Resumen visual de la medición
-
-```
-Adaptador USB-UART (conectado a la PC, sin conectar al EAP)
-
-  Pin VCC ────┐
-              │  Multímetro DC
-  Pin GND ────┘
-              Lectura esperada: 3.2V – 3.4V ✓
-              Lectura peligrosa: 4.8V – 5.2V ✗ NO USAR
-
-  Pin TXD ────┐
-              │  Multímetro DC
-  Pin GND ────┘
-              Lectura esperada: 3.2V – 3.4V ✓ (idle = alto)
-              Lectura peligrosa: 4.8V – 5.2V ✗ NO USAR
-```
-
-> **Regla de oro:** Si alguna medición da más de 3.6V, no conectes ese adaptador
-> al EAP225. Comprá uno que opere nativamente a 3.3V (los CP2102 y FT232RL
-> generalmente vienen bien de fábrica).
-
----
-
-### Paso 1: Descargar las imágenes de OpenWrt
-
-Desde el toolbox:
+#### 1. Download the OpenWrt images
 
 ```bash
 mkdir -p ~/openwrt-eap225v4 && cd ~/openwrt-eap225v4
-
-# Imagen initramfs (boot temporal desde RAM)
-wget https://downloads.openwrt.org/releases/23.05.5/targets/ath79/generic/openwrt-23.05.5-ath79-generic-tplink_eap225-v4-initramfs-kernel.bin \
-  -O initramfs.bin
-
-# Imagen sysupgrade (instalación permanente)
-wget https://downloads.openwrt.org/releases/23.05.5/targets/ath79/generic/openwrt-23.05.5-ath79-generic-tplink_eap225-v4-squashfs-sysupgrade.bin \
-  -O sysupgrade.bin
+wget https://downloads.openwrt.org/releases/23.05.5/targets/ath79/generic/openwrt-23.05.5-ath79-generic-tplink_eap225-v4-initramfs-kernel.bin -O initramfs.bin
+wget https://downloads.openwrt.org/releases/23.05.5/targets/ath79/generic/openwrt-23.05.5-ath79-generic-tplink_eap225-v4-squashfs-sysupgrade.bin -O sysupgrade.bin
 ```
 
-> **Verificar versión:** chequeá la última release estable en
-> https://firmware-selector.openwrt.org/ buscando "EAP225 v4" y ajustá los URLs.
+Check the latest stable release on the firmware selector searching "EAP225 v4" and adjust the URLs.
 
----
+#### 2. Open the case and wire the serial
 
-### Paso 2: Abrir el EAP225 y conectar el adaptador serial
-
-1. **Desconectar la alimentación** (desenchufar el PoE).
-2. **Abrir la carcasa** — quitar los tornillos de la parte trasera.
-3. **Localizar el header J4** en el PCB — son 4 pads alineados:
+Disconnect power. Open the case, locate header J4 (`Pin1 TXD, Pin2 RXD, Pin3 GND, Pin4 VCC`). You may need to bridge unpopulated resistors R225 (TXD) and R237 (RXD). Solder pins/wires, then connect:
 
 ```
-J4: [ Pin1: TXD ] [ Pin2: RXD ] [ Pin3: GND ] [ Pin4: VCC ]
+EAP225 J4 Pin1 (TXD)  →  RXD of the USB-UART adapter
+EAP225 J4 Pin2 (RXD)  →  TXD of the USB-UART adapter
+EAP225 J4 Pin3 (GND)  →  GND of the USB-UART adapter
+EAP225 J4 Pin4 (VCC)  →  DO NOT CONNECT (powered by PoE)
 ```
 
-4. **Puentear resistencias si es necesario** — puede ser necesario puentear las
-   resistencias no pobladas **R225** (línea TXD) y **R237** (línea RXD).
-5. **Soldar pines o cables** al header J4.
-6. **Conectar al adaptador USB-UART:**
-
-```
-EAP225 J4 Pin 1 (TXD)  →  RXD del adaptador USB-UART
-EAP225 J4 Pin 2 (RXD)  →  TXD del adaptador USB-UART
-EAP225 J4 Pin 3 (GND)  →  GND del adaptador USB-UART
-EAP225 J4 Pin 4 (VCC)  →  NO CONECTAR (el EAP se alimenta por PoE)
-```
-
----
-
-### Paso 3: Abrir la terminal serial
-
-Desde el toolbox:
+#### 3. Open the serial terminal
 
 ```bash
-# Verificar que el adaptador aparezca:
 ls /dev/ttyUSB*
-
-# Abrir terminal serial:
 picocom -b 115200 /dev/ttyUSB0
 ```
 
-Para salir de picocom: `Ctrl+A` y después `Ctrl+X`.
+Exit picocom with `Ctrl+A` then `Ctrl+X`. Do not power the EAP yet.
 
-**No alimentar el EAP todavía** — lo hacemos después de configurar TFTP.
+#### 4. Configure the network and TFTP server
 
----
-
-### Paso 4: Configurar la red y el servidor TFTP
-
-Conectá tu PC al EAP225 con cable Ethernet directo.
-
-**Configurar IP estática (en el HOST, fuera del toolbox):**
+Connect the PC directly to the EAP225. Set a static IP:
 
 ```bash
-# Identificar tu interfaz Ethernet:
-ip link show
-# Buscar algo como: enp0s25, eno1, enp3s0, etc.
-
-# Crear conexión temporal con NetworkManager:
-sudo nmcli con add type ethernet ifname TU_INTERFAZ con-name eap-flash \
-  ipv4.method manual ipv4.addresses 192.168.1.10/24
-sudo nmcli con up eap-flash
+sudo ip addr add 192.168.1.10/24 dev eth0   # replace eth0 with your interface
 ```
 
-**Abrir el firewall para TFTP (en el HOST):**
+Open the firewall for TFTP and start dnsmasq (keep running):
 
 ```bash
-sudo firewall-cmd --add-service=tftp
-```
-
-**Levantar el servidor TFTP (en el toolbox):**
-
-```bash
-# Preparar directorio
+sudo firewall-cmd --add-service=tftp   # or: sudo ufw allow 69/udp
 mkdir -p /tmp/tftp
 cp ~/openwrt-eap225v4/initramfs.bin /tmp/tftp/
-
-# Levantar dnsmasq solo como servidor TFTP (sin DHCP):
-sudo dnsmasq --no-daemon --port=0 --enable-tftp \
-  --tftp-root=/tmp/tftp --listen-address=192.168.1.10
+sudo dnsmasq --no-daemon --port=0 --enable-tftp --tftp-root=/tmp/tftp --listen-address=192.168.1.10
 ```
 
-**Dejar esa terminal corriendo.** Abrir otra terminal/pestaña en el toolbox para
-los pasos siguientes.
+#### 5. Access U-Boot
 
----
-
-### Paso 5: Acceder al bootloader U-Boot
-
-1. Tener picocom abierto en otra terminal.
-2. **Conectar la alimentación PoE** al EAP225.
-3. **Inmediatamente presionar `Ctrl+B` repetidamente** en la terminal serial.
-4. Si lo lográs interrumpir, aparece el prompt de U-Boot:
+Have picocom open. Connect PoE power. Immediately press `Ctrl+B` repeatedly. On success you get:
 
 ```
 ath>
 ```
 
-> Si se te pasa y arranca el firmware stock, desconectá el PoE, esperá unos
-> segundos, y volvé a conectar mientras spameás `Ctrl+B`.
+If it boots into stock firmware, disconnect PoE, wait, reconnect while spamming `Ctrl+B`.
 
----
+#### 6. Load OpenWrt over TFTP
 
-### Paso 6: Cargar OpenWrt por TFTP
-
-En el prompt `ath>` de U-Boot:
+At the `ath>` prompt:
 
 ```
 ath> setenv ipaddr 192.168.1.1
@@ -307,112 +181,57 @@ ath> tftp 0x80800000 initramfs.bin
 ath> bootelf $fileaddr
 ```
 
-Qué hace cada comando:
-- `setenv ipaddr` — IP que usa el EAP225 para la transferencia
-- `setenv serverip` — IP de tu PC (servidor TFTP)
-- `tftp` — descarga la imagen a la RAM del EAP225
-- `bootelf` — arranca OpenWrt desde la RAM
+This runs OpenWrt from RAM (flash untouched). The dnsmasq terminal shows the transfer; the serial terminal shows the kernel booting.
 
-En la terminal de dnsmasq deberías ver la transferencia del archivo.
-En la terminal serial vas a ver el kernel de Linux arrancando.
+#### 7. Install OpenWrt permanently
 
-**Esto es temporario** — OpenWrt corre desde la RAM, no tocó la flash todavía.
+OpenWrt is now reachable at `192.168.1.1`.
 
----
-
-### Paso 7: Instalar OpenWrt permanentemente
-
-Ahora el EAP225 corre OpenWrt (temporal) y es accesible por red en `192.168.1.1`.
-
-**Opción A: Por SSH (recomendada)**
+**Option A — via SSH (recommended):**
 
 ```bash
-# Verificar conectividad:
 ping -c 3 192.168.1.1
-
-# Copiar la imagen sysupgrade:
 scp ~/openwrt-eap225v4/sysupgrade.bin root@192.168.1.1:/tmp/
-
-# Conectar por SSH:
 ssh root@192.168.1.1
-
-# Dentro del EAP225, flashear:
+# inside the device:
 sysupgrade -v /tmp/sysupgrade.bin
 ```
 
-**Opción B: Por interfaz web (LuCI)**
+**Option B — via LuCI:** open `http://192.168.1.1` → System → Backup/Flash Firmware → upload `sysupgrade.bin` → confirm.
 
-1. Abrir `http://192.168.1.1` en el navegador.
-2. Ir a System → Backup/Flash Firmware.
-3. Subir `sysupgrade.bin`.
-4. Confirmar.
+The device reboots and this time boots OpenWrt from internal flash.
 
-El equipo se reinicia. Esta vez arranca OpenWrt desde la flash interna.
+#### 8. First login
 
----
+Wait for the LED to stabilize. Browse to `http://192.168.1.1`. User `root`, no password. Set a password immediately under System → Administration.
 
-### Paso 8: Primer ingreso a OpenWrt
-
-1. Esperar a que el LED se estabilice.
-2. Ir a `http://192.168.1.1`.
-3. Usuario: `root`, sin contraseña.
-4. **Configurar contraseña inmediatamente** en System → Administration.
-
----
-
-### Paso 9: Limpiar el entorno
+#### 9. Clean up
 
 ```bash
-# En el HOST - quitar la conexión de red temporal:
-sudo nmcli con delete eap-flash
-
-# Restaurar firewall:
-sudo firewall-cmd --remove-service=tftp
-
-# Cerrar picocom: Ctrl+A, Ctrl+X
-# Cerrar dnsmasq: Ctrl+C en la terminal donde corre
-
-# Opcional - eliminar el toolbox:
-toolbox rm openwrt-flash
+sudo ip addr del 192.168.1.10/24 dev eth0
+# stop dnsmasq: Ctrl+C in its terminal
+# exit picocom: Ctrl+A, Ctrl+X
 ```
 
----
+### Back to stock / last resort
 
-## Resumen de viabilidad
-
-| Firmware stock | SSH + `cliclientd` + web | Consola serial + U-Boot | Recovery TFTP (botón reset) |
-|---|---|---|---|
-| ≤ 5.1.6 | **Funciona** | Funciona | No documentado para v4 |
-| 5.2.x | **BLOQUEADO** | **Funciona** ← tu camino | No documentado para v4 |
+There is no TP-Link recovery mode after flashing OpenWrt. To restore stock firmware, use an SPI programmer (clip SOIC-8 + CH341A at 3.3V, or Raspberry Pi + `flashrom`) with a full flash backup. U-Boot is not blocked on this device, so the serial method remains available even after a bad flash.
 
 ---
 
-## Alternativa de último recurso: Programador SPI
+## Part 2 — First boot & basic configuration
 
-Si por alguna razón U-Boot también estuviera bloqueado (no debería), se puede
-escribir directamente al chip de flash SPI-NOR con un programador externo
-(clip SOIC-8 + CH341A a 3.3V, o Raspberry Pi + `flashrom`). Hacer backup
-completo de la flash antes de tocar nada.
+Minimal steps after OpenWrt is running. The EAP225 is an access point, so keep it simple.
 
----
-
-## Seguimiento
-
-Hay discusiones activas intentando escapar la CLI del 5.2.x. A marzo de 2026,
-nadie lo ha logrado. Seguí estos hilos:
-
-- https://forum.openwrt.org/t/installing-openwrt-on-eap225v3-with-new-firmware/242003
-- https://forum.openwrt.org/t/eap225-outdoor-v1-fw-5-2-3-cliclientd-invalid-command/244922
+- Wait for the LED to stabilize, then browse to `http://192.168.1.1` and log in as `root`.
+- Set a root password: System → Administration.
+- Enable Wi-Fi if needed: Network → Wireless → enable the radios (radio0 2.4 GHz, radio1 5 GHz).
+- For a dumb AP behind an existing router: disable DHCP on LAN, assign a static IP in your subnet, bridge wireless interfaces to LAN.
+- Set timezone/NTP: System → System → Timezone; Services → NTP (or install `chrony-nts` for NTS).
+- Update packages: System → Software → Update lists, then upgrade.
 
 ---
 
-## Links de referencia
+## Credits and license
 
-- **Firmware selector OpenWrt (EAP225 v4):**
-  https://firmware-selector.openwrt.org/?version=23.05.5&target=ath79/generic&id=tplink_eap225-v4
-- **Wiki OpenWrt del EAP225:**
-  https://openwrt.org/toh/tp-link/eap225
-- **Commit de soporte v4:**
-  https://git.openwrt.org/7e21ce8e2b0b73f145af96958511f761544942d7
-- **Recovery mode TP-Link (NO incluye EAP225 v4):**
-  https://www.tp-link.com/us/support/faq/3186/
+Flashing method based on the OpenWrt community work for the EAP225 (serial console + U-Boot + TFTP). See the [OpenWrt wiki](https://openwrt.org/toh/tp-link/eap225) and forum threads. Licensed under [GPL-2.0](https://www.gnu.org/licenses/old-licenses/gpl-2.0.html).
