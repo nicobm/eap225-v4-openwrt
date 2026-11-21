@@ -9,14 +9,18 @@
 <meta name="color-scheme" content="dark light">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E%3Cstop stop-color='%232dd4bf'/%3E%3Cstop offset='1' stop-color='%2360a5fa'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='64' height='64' rx='14' fill='url(%23g)'/%3E%3Ctext x='32' y='43' font-family='ui-monospace,monospace' font-size='28' font-weight='800' text-anchor='middle' fill='%23041018'%3EE4%3C/text%3E%3C/svg%3E">
 <script>
-/* Apply the stored theme before the first paint to avoid a flash of the wrong palette. */
+/* Apply the stored theme before the first paint to avoid a flash of the wrong palette.
+   With no stored preference, the page follows the OS theme and keeps following it live. */
 (function () {
-  var theme;
-  try { theme = localStorage.getItem('eap225-theme'); } catch (e) {}
+  var stored;
+  try { stored = localStorage.getItem('eap225-theme'); } catch (e) {}
+  var theme = (stored === 'light' || stored === 'dark') ? stored : null;
   if (!theme) {
-    theme = window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+    theme = (!window.matchMedia || window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
   }
   document.documentElement.setAttribute('data-theme', theme);
+  var meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute('content', theme === 'light' ? '#f4f6fb' : '#060911');
 })();
 </script>
 <style>
@@ -91,6 +95,24 @@
   --code-border: rgba(15, 23, 42, 0.24);
 
   --shadow: 0 20px 50px -30px rgba(15, 23, 42, 0.35);
+}
+
+/* Keep native widgets (scrollbars, form controls, spellcheck) in sync with the palette. */
+:root[data-theme="dark"] { color-scheme: dark; }
+:root[data-theme="light"] { color-scheme: light; }
+
+/* Applied only while the palette is swapping so colors cross-fade quickly
+   instead of snapping, without slowing down regular hover transitions. */
+@media (prefers-reduced-motion: no-preference) {
+  html.theme-swapping,
+  html.theme-swapping *,
+  html.theme-swapping *::before,
+  html.theme-swapping *::after {
+    transition-property: background-color, border-color, color, fill, stroke, outline-color, box-shadow;
+    transition-duration: 180ms;
+    transition-timing-function: ease;
+    transition-delay: 0s;
+  }
 }
 
 /* ============================================================
@@ -1662,9 +1684,25 @@ sudo ip addr del 192.168.1.10/24 dev eth0
   // Theme
   // ============================================================
   var themeToggle = document.getElementById('themeToggle');
+  var themeMeta = document.querySelector('meta[name="theme-color"]');
+  var colorSchemeQuery = window.matchMedia ? window.matchMedia('(prefers-color-scheme: dark)') : null;
+  var themeSwapTimer = null;
 
   function currentTheme() {
     return document.documentElement.getAttribute('data-theme') === 'light' ? 'light' : 'dark';
+  }
+
+  function systemTheme() {
+    return colorSchemeQuery && colorSchemeQuery.matches ? 'dark' : 'light';
+  }
+
+  function storedTheme() {
+    try {
+      var value = localStorage.getItem('eap225-theme');
+      return (value === 'light' || value === 'dark') ? value : null;
+    } catch (e) {
+      return null;
+    }
   }
 
   function syncThemeButton() {
@@ -1673,12 +1711,55 @@ sudo ip addr del 192.168.1.10/24 dev eth0
     themeToggle.setAttribute('title', themeToggle.getAttribute('aria-label'));
   }
 
+  function applyTheme(theme, animate) {
+    var root = document.documentElement;
+    if (root.getAttribute('data-theme') === theme) {
+      syncThemeButton();
+      return;
+    }
+
+    var reduceMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (animate && !reduceMotion) {
+      root.classList.add('theme-swapping');
+      void root.offsetWidth; // flush styles so the transition starts from the old palette
+      root.setAttribute('data-theme', theme);
+      window.clearTimeout(themeSwapTimer);
+      themeSwapTimer = window.setTimeout(function () {
+        root.classList.remove('theme-swapping');
+      }, 220);
+    } else {
+      root.setAttribute('data-theme', theme);
+    }
+
+    if (themeMeta) themeMeta.setAttribute('content', theme === 'light' ? '#f4f6fb' : '#060911');
+    syncThemeButton();
+  }
+
+  function onSystemThemeChange(event) {
+    // A choice made with the toggle is explicit and wins over the OS preference.
+    if (storedTheme()) return;
+    applyTheme(event.matches ? 'dark' : 'light', true);
+  }
+
+  if (colorSchemeQuery) {
+    if (colorSchemeQuery.addEventListener) {
+      colorSchemeQuery.addEventListener('change', onSystemThemeChange);
+    } else if (colorSchemeQuery.addListener) {
+      colorSchemeQuery.addListener(onSystemThemeChange); // older Safari/Firefox
+    }
+  }
+
   if (themeToggle) {
     themeToggle.addEventListener('click', function () {
       var next = currentTheme() === 'dark' ? 'light' : 'dark';
-      document.documentElement.setAttribute('data-theme', next);
-      try { localStorage.setItem('eap225-theme', next); } catch (e) {}
-      syncThemeButton();
+      try {
+        if (next === systemTheme()) {
+          localStorage.removeItem('eap225-theme'); // back to following the OS
+        } else {
+          localStorage.setItem('eap225-theme', next);
+        }
+      } catch (e) {}
+      applyTheme(next, true);
     });
   }
 
